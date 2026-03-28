@@ -22,6 +22,11 @@ APP_DIR = Path(__file__).resolve().parent
 DATABASE_FILE = (APP_DIR / "database.db").resolve()
 # Conexão gerenciada por database.py → PgConn (psycopg2) ou SQLite local (fallback).
 
+# Wrapper global: garante format DD/MM/AAAA em todos os seletores de data
+def _date_input(label: str, **kwargs):
+    kwargs.setdefault("format", "DD/MM/YYYY")
+    return st.date_input(label, **kwargs)
+
 # Resumo de faturas: rótulo exibido + nome exato em `cartoes_credito` (import/csv/cartoes_credito.csv).
 CARTOES_RESUMO: list[tuple[str, str]] = [
     ("Itaú Azul", "Cartão Itaú Azul"),
@@ -918,7 +923,7 @@ def carregar_dividas(conn) -> pd.DataFrame:
         return db.read_sql(
             """
             SELECT id, credor_descricao, mes_alvo, fase,
-                   valor_quitacao_alvo, parcela_atual, poder_pagamento_extra,
+                   valor_quitacao_alvo, parcela_atual,
                    status, regra_ouro, observacao
             FROM dividas_estrategicas
             ORDER BY fase ASC, valor_quitacao_alvo ASC
@@ -1092,7 +1097,7 @@ def main() -> None:
     )
 
     with tab_dash:
-        mes_ref = st.date_input(
+        mes_ref = _date_input(
             "Mês de referência (performance, saídas e recortes)",
             value=date.today().replace(day=1),
             key="dash_mes_ref",
@@ -1280,7 +1285,7 @@ def main() -> None:
         with st.form("form_provisao_despesa"):
             p1, p2 = st.columns(2)
             with p1:
-                p_data = st.date_input(
+                p_data = _date_input(
                     "Data prevista (1ª parcela)",
                     value=date(2026, 4, 5),
                     key="prov_data",
@@ -1385,7 +1390,7 @@ def main() -> None:
                 pref = pend[pend["id"] == pid].iloc[0]
                 r1, r2 = st.columns(2)
                 with r1:
-                    r_data = st.date_input(
+                    r_data = _date_input(
                         "Data real do pagamento",
                         value=date.fromisoformat(str(pref["data_prevista"])[:10]),
                         key="real_data",
@@ -1426,7 +1431,7 @@ def main() -> None:
             with st.form("form_despesa_debito"):
                 r1, r2 = st.columns(2)
                 with r1:
-                    d_data = st.date_input("Data", value=date.today(), key="desp_data")
+                    d_data = _date_input("Data", value=date.today(), key="desp_data")
                 with r2:
                     d_val = st.number_input(
                         "Valor (R$)",
@@ -1481,18 +1486,35 @@ def main() -> None:
 
     with tab_cli:
         st.subheader("Honorários do mês")
-        ref = st.date_input(
-            "Mês de competência",
-            value=date(2026, 3, 1),
-            help="Usa o primeiro dia do mês selecionado como data_competência.",
-        )
-        competencia = date(ref.year, ref.month, 1).isoformat()
+
+        _MESES_PT = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+                     "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+        _ANOS_CLI = list(range(2024, 2029))
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            mes_sel = st.selectbox(
+                "Mês de competência",
+                _MESES_PT,
+                index=date.today().month - 1,
+                key="cli_mes_sel",
+            )
+        with cc2:
+            ano_sel = st.selectbox(
+                "Ano",
+                _ANOS_CLI,
+                index=_ANOS_CLI.index(date.today().year) if date.today().year in _ANOS_CLI else 0,
+                key="cli_ano_sel",
+            )
+        mes_num = _MESES_PT.index(mes_sel) + 1
+        competencia = date(int(ano_sel), mes_num, 1).isoformat()
+        st.caption(f"Competência: **{mes_sel}/{ano_sel}**")
 
         df = db.read_sql(
             """
             SELECT
               c.id AS cliente_id,
               c.nome,
+              c.dia_vencimento,
               c.valor_honorario,
               COALESCE(r.status, 'Pendente') AS status_pagamento
             FROM clientes c
@@ -1504,11 +1526,27 @@ def main() -> None:
             conn,
             params=(competencia,),
         )
+
+        # Linha de total
+        if not df.empty:
+            total_hon = df["valor_honorario"].fillna(0).sum()
+            soma_row = pd.DataFrame([{
+                "cliente_id": None,
+                "nome": "📊 TOTAL",
+                "dia_vencimento": None,
+                "valor_honorario": total_hon,
+                "status_pagamento": "",
+            }])
+            df_view = pd.concat([df, soma_row], ignore_index=True)
+        else:
+            df_view = df
+
         edited = st.data_editor(
-            df,
+            df_view,
             column_config={
                 "cliente_id": st.column_config.NumberColumn("ID", disabled=True, format="%d"),
                 "nome": st.column_config.TextColumn("Cliente", disabled=True, width="large"),
+                "dia_vencimento": st.column_config.NumberColumn("Vencimento (dia)", disabled=True, format="%d"),
                 "valor_honorario": st.column_config.NumberColumn(
                     "Honorário",
                     disabled=True,
@@ -1516,8 +1554,8 @@ def main() -> None:
                 ),
                 "status_pagamento": st.column_config.SelectboxColumn(
                     "Pago no mês?",
-                    options=["Pendente", "Pago"],
-                    required=True,
+                    options=["Pendente", "Pago", ""],
+                    required=False,
                 ),
             },
             hide_index=True,
@@ -1526,6 +1564,8 @@ def main() -> None:
         )
         if st.button("Salvar pagamentos do mês", type="primary"):
             for _, row in edited.iterrows():
+                if not row["cliente_id"] or pd.isna(row["cliente_id"]):
+                    continue  # pula linha de total
                 db.upsert_receita_mes(
                     conn,
                     cliente_id=int(row["cliente_id"]),
@@ -1625,14 +1665,14 @@ def main() -> None:
                     sel_cid = None
                     st.warning("Cadastre um cartão acima ou via seed.")
             with fc1:
-                mes_ref_in = st.date_input(
+                mes_ref_in = _date_input(
                     "Mês/ano de referência (competência da fatura)",
                     value=date.today().replace(day=1),
                     key="fat_mes_ref",
                 )
             fc2, fc3 = st.columns(2)
             with fc2:
-                venc = st.date_input(
+                venc = _date_input(
                     "Data exata do vencimento",
                     value=date.today(),
                     key="fat_venc",
@@ -1669,7 +1709,7 @@ def main() -> None:
         st.markdown("##### Matriz: cartões × meses")
         mx1, mx2 = st.columns(2)
         with mx1:
-            mat_ini = st.date_input(
+            mat_ini = _date_input(
                 "Primeiro mês (coluna esquerda)",
                 value=date.today().replace(day=1),
                 key="mat_ini",
@@ -1683,7 +1723,8 @@ def main() -> None:
                 key="n_meses_mat",
             )
         col_keys = _meses_colunas(mat_ini, int(n_meses_mat))
-        col_labels = [k[:7] for k in col_keys]
+        # Formata colunas como MM/AAAA (ex.: 03/2026)
+        col_labels = [f"{k[5:7]}/{k[:4]}" for k in col_keys]
         try:
             fat_all = db.read_sql(
                 """
@@ -1717,6 +1758,22 @@ def main() -> None:
                         pago = int(sub.iloc[0]["status_pago"])
                         rowd[cl] = f"{brl(v)} ✅" if pago else brl(v)
                 mat_rows.append(rowd)
+
+        # Linha de totais por mês
+        if mat_rows and not cart_df.empty:
+            tot_row: dict[str, str] = {"Cartão": "📊 TOTAL"}
+            for cl in col_labels:
+                vals = []
+                for r in mat_rows:
+                    v = r.get(cl, "—")
+                    if v and v != "—":
+                        try:
+                            vals.append(float(v.replace("R$\xa0", "").replace("R$ ", "").replace(".", "").replace(",", ".").replace(" ✅", "")))
+                        except ValueError:
+                            pass
+                tot_row[cl] = brl(sum(vals)) if vals else "—"
+            mat_rows.append(tot_row)
+
         st.dataframe(pd.DataFrame(mat_rows), hide_index=True, use_container_width=True)
 
         st.divider()
@@ -1831,7 +1888,7 @@ def main() -> None:
         with st.form("form_entradas_extras", clear_on_submit=True):
             fe1, fe2 = st.columns(2)
             with fe1:
-                ee_data = st.date_input(
+                ee_data = _date_input(
                     "Data (prevista ou real)",
                     value=date.today(),
                     key="ee_form_data",
@@ -1946,7 +2003,7 @@ def main() -> None:
                         f"**{er['descricao']}** — {brl(float(er['valor']))} — data ref. "
                         f"**{str(er['data'])[:10]}**"
                     )
-                    dr_rec = st.date_input(
+                    dr_rec = _date_input(
                         "Data do recebimento",
                         value=date.today(),
                         key=f"ee_dr_{eid}",
@@ -2090,7 +2147,7 @@ def main() -> None:
             "**Entradas extras realizadas** permanecem nas barras azul claro."
         )
 
-        ref_v = st.date_input(
+        ref_v = _date_input(
             "Referência para próximos vencimentos",
             value=date.today(),
             key="fluxo_ref_venc",
@@ -2099,7 +2156,7 @@ def main() -> None:
 
         r_cfg1, r_cfg2 = st.columns(2)
         with r_cfg1:
-            fluxo_ini = st.date_input(
+            fluxo_ini = _date_input(
                 "Início da projeção",
                 value=date.today(),
                 key="fluxo_data_ini",
@@ -2185,6 +2242,15 @@ def main() -> None:
                 "saldo_projetado": "Saldo projetado",
             }
             tab_view = tab_view.rename(columns=rename)
+
+            # Linha de totais (soma todas as colunas numéricas)
+            num_cols = [c for c in tab_view.columns if c != "Dia"]
+            soma_vals = {c: tab_view[c].sum() for c in num_cols}
+            soma_vals["Dia"] = "📊 TOTAL"
+            tab_view = pd.concat(
+                [tab_view, pd.DataFrame([soma_vals])], ignore_index=True
+            )
+
             st.markdown("**Tabela de apoio**")
             st.dataframe(
                 tab_view,
@@ -2220,7 +2286,7 @@ def main() -> None:
         default_ini = _sub_months(date(hoje.year, hoje.month, 1), 11)
         rp_c1, rp_c2 = st.columns(2)
         with rp_c1:
-            mes_inicio_rp = st.date_input(
+            mes_inicio_rp = _date_input(
                 "Primeiro mês da série",
                 value=default_ini,
                 key="rp_mes_inicio",
@@ -2277,11 +2343,7 @@ def main() -> None:
                 dividas.loc[dividas["status"] != "QUITADA", "valor_quitacao_alvo"]
                 .fillna(0).sum()
             )
-            poder_extra = float(
-                dividas["poder_pagamento_extra"].fillna(0).sum()
-            )
-
-            m1, m2, m3 = st.columns(3)
+            m1, m2 = st.columns(2)
             m1.metric(
                 "💸 Fôlego Mensal Liberado",
                 brl(folego),
@@ -2291,11 +2353,6 @@ def main() -> None:
                 "🔴 Total a Quitar",
                 brl(total_pendente),
                 help="Soma do valor_quitacao_alvo das dívidas pendentes.",
-            )
-            m3.metric(
-                "⚡ Poder de Pagamento Extra",
-                brl(poder_extra),
-                help="Soma do campo poder_pagamento_extra — valor disponível para acelerar quitações.",
             )
 
             st.divider()
