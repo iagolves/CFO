@@ -917,10 +917,11 @@ def carregar_dividas(conn) -> pd.DataFrame:
     try:
         return db.read_sql(
             """
-            SELECT id, nome, instituicao, valor_quitacao_alvo, parcela_mensal,
-                   status, regra_ouro, ordem_pagamento, observacao
+            SELECT id, credor_descricao, mes_alvo, fase,
+                   valor_quitacao_alvo, parcela_atual, poder_pagamento_extra,
+                   status, regra_ouro, observacao
             FROM dividas_estrategicas
-            ORDER BY ordem_pagamento ASC NULLS LAST, valor_quitacao_alvo ASC
+            ORDER BY fase ASC, valor_quitacao_alvo ASC
             """,
             conn,
         )
@@ -2544,78 +2545,89 @@ def main() -> None:
         if dividas.empty:
             st.warning(
                 "Tabela `dividas_estrategicas` não encontrada ou vazia. "
-                "Crie a tabela no Supabase com as colunas: "
-                "`id, nome, instituicao, valor_quitacao_alvo, parcela_mensal, "
-                "status, regra_ouro, ordem_pagamento, observacao`."
+                "Adicione registros pelo Table Editor do Supabase."
             )
         else:
             # ── Métricas de topo ─────────────────────────────────────────────
             folego = float(
-                dividas.loc[dividas["status"] == "QUITADA", "parcela_mensal"]
-                .fillna(0)
-                .sum()
+                dividas.loc[dividas["status"] == "QUITADA", "parcela_atual"]
+                .fillna(0).sum()
             )
             total_pendente = float(
                 dividas.loc[dividas["status"] != "QUITADA", "valor_quitacao_alvo"]
-                .fillna(0)
-                .sum()
+                .fillna(0).sum()
+            )
+            poder_extra = float(
+                dividas["poder_pagamento_extra"].fillna(0).sum()
             )
 
-            m1, m2 = st.columns(2)
+            m1, m2, m3 = st.columns(3)
             m1.metric(
                 "💸 Fôlego Mensal Liberado",
                 brl(folego),
-                help="Soma das parcelas das dívidas já quitadas — dinheiro que voltou ao caixa.",
+                help="Soma das parcelas das dívidas já QUITADAS.",
             )
             m2.metric(
-                "🔴 Total Pendente",
+                "🔴 Total a Quitar",
                 brl(total_pendente),
-                help="Soma do valor de quitação alvo de todas as dívidas ainda pendentes.",
+                help="Soma do valor_quitacao_alvo das dívidas pendentes.",
+            )
+            m3.metric(
+                "⚡ Poder de Pagamento Extra",
+                brl(poder_extra),
+                help="Soma do campo poder_pagamento_extra — valor disponível para acelerar quitações.",
             )
 
             st.divider()
 
-            # ── Lista de dívidas ─────────────────────────────────────────────
-            for _, row in dividas.iterrows():
-                nome        = str(row.get("nome") or row.get("instituicao") or f"Dívida #{row['id']}")
-                status      = str(row.get("status") or "Pendente")
-                parcela     = float(row.get("parcela_mensal") or 0)
-                alvo        = float(row.get("valor_quitacao_alvo") or 0)
-                regra_ouro  = bool(row.get("regra_ouro") or False)
-                obs         = str(row.get("observacao") or "")
-                inst        = str(row.get("instituicao") or "")
+            # ── Agrupa por fase ───────────────────────────────────────────────
+            fases = dividas["fase"].fillna("Sem fase").unique().tolist()
+            for fase in fases:
+                grupo = dividas[dividas["fase"].fillna("Sem fase") == fase]
+                pendentes_fase = (grupo["status"] != "QUITADA").sum()
+                icon_fase = "✅" if pendentes_fase == 0 else "🔥" if "Sobrev" in str(fase) else "🚀" if "Ofens" in str(fase) else "💡"
+                st.markdown(f"### {icon_fase} {fase}")
 
-                icon = "✅" if status == "QUITADA" else "⏳"
-                label = f"{icon} {nome}"
-                if inst and inst != nome:
-                    label += f" — {inst}"
+                for _, row in grupo.iterrows():
+                    credor     = str(row.get("credor_descricao") or f"Dívida #{row['id']}")
+                    status     = str(row.get("status") or "Pendente")
+                    parcela    = float(row.get("parcela_atual") or 0)
+                    alvo       = float(row.get("valor_quitacao_alvo") or 0)
+                    mes_alvo   = str(row.get("mes_alvo") or "Indefinido")
+                    regra_ouro = bool(row.get("regra_ouro") or False)
+                    obs        = str(row.get("observacao") or "")
 
-                with st.expander(label, expanded=(status != "QUITADA")):
-                    c1, c2 = st.columns(2)
-                    c1.markdown(f"**Parcela mensal:** {brl(parcela)}")
-                    c2.markdown(f"**Valor para quitar:** {brl(alvo)}")
+                    icon = "✅" if status == "QUITADA" else "⏳"
+                    label = f"{icon} {credor}  ·  Meta: **{mes_alvo}**  ·  Parcela: **{brl(parcela)}**"
 
-                    if obs:
-                        st.caption(obs)
+                    with st.expander(label, expanded=(status != "QUITADA")):
+                        c1, c2 = st.columns(2)
+                        c1.markdown(f"**Parcela atual:** {brl(parcela)}")
+                        c2.markdown(f"**Valor para quitar:** {brl(alvo)}")
 
-                    if regra_ouro:
-                        st.info(
-                            "⚠️ **Regra de Ouro:** esta dívida tem taxa menor que o retorno "
-                            "esperado dos seus investimentos — **não antecipe** o pagamento.",
-                            icon="💡",
-                        )
+                        if obs:
+                            st.caption(f"📝 {obs}")
 
-                    if status == "QUITADA":
-                        st.success(f"✅ Dívida quitada! Parcela de **{brl(parcela)}/mês** liberada no caixa.")
-                    else:
-                        btn_key = f"quitar_{row['id']}"
-                        if st.button(f"Marcar como Quitada — {nome}", key=btn_key, type="primary"):
-                            try:
-                                atualizar_status_divida(conn, int(row["id"]))
-                                st.success(f"🎉 {nome} marcada como QUITADA!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Erro ao atualizar: {e}")
+                        if regra_ouro:
+                            st.info(
+                                "**Regra de Ouro:** taxa desta dívida é menor que o retorno "
+                                "esperado dos seus investimentos — **não antecipe** o pagamento.",
+                                icon="💡",
+                            )
+
+                        if status == "QUITADA":
+                            st.success(f"✅ Quitada! Parcela de **{brl(parcela)}/mês** liberada no caixa.")
+                        else:
+                            btn_key = f"quitar_{row['id']}"
+                            if st.button(f"✅ Marcar como Quitada", key=btn_key, type="primary"):
+                                try:
+                                    atualizar_status_divida(conn, int(row["id"]))
+                                    st.success(f"🎉 {credor} marcada como QUITADA!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erro ao atualizar: {e}")
+
+                st.divider()
 
 
 if __name__ == "__main__":
