@@ -16,11 +16,9 @@ from plotly.subplots import make_subplots
 import streamlit as st
 
 import database as db
-# Conexão com o Supabase (PostgreSQL) usando os Secrets que você salvou
-conn = st.connection("postgresql", type="sql")
 
 APP_DIR = Path(__file__).resolve().parent
-# Mesmo arquivo populado por seed_db.py (caminho absoluto).
+# Conexão gerenciada por database.py → PgConn (psycopg2) ou SQLite local (fallback).
 
 # Resumo de faturas: rótulo exibido + nome exato em `cartoes_credito` (import/csv/cartoes_credito.csv).
 CARTOES_RESUMO: list[tuple[str, str]] = [
