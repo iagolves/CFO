@@ -912,6 +912,31 @@ def fig_fluxo_diario(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def carregar_dividas(conn) -> pd.DataFrame:
+    """Carrega todas as dívidas da tabela dividas_estrategicas."""
+    try:
+        return db.read_sql(
+            """
+            SELECT id, nome, instituicao, valor_quitacao_alvo, parcela_mensal,
+                   status, regra_ouro, ordem_pagamento, observacao
+            FROM dividas_estrategicas
+            ORDER BY ordem_pagamento ASC NULLS LAST, valor_quitacao_alvo ASC
+            """,
+            conn,
+        )
+    except Exception:
+        return pd.DataFrame()
+
+
+def atualizar_status_divida(conn, id_divida: int) -> None:
+    """Muda o status da dívida para 'QUITADA' no banco."""
+    conn.execute(
+        "UPDATE dividas_estrategicas SET status = 'QUITADA' WHERE id = ?",
+        (id_divida,),
+    )
+    conn.commit()
+
+
 def get_conn():
     """
     Retorna conexão ativa: Supabase (PostgreSQL) se secrets.toml configurado,
@@ -1052,7 +1077,7 @@ def main() -> None:
             db.init_database(force_reload=True)
             st.rerun()
 
-    tab_dash, tab_desp, tab_cli, tab_div, tab_car, tab_ee, tab_flux, tab_rp = st.tabs(
+    tab_dash, tab_desp, tab_cli, tab_div, tab_car, tab_ee, tab_flux, tab_rp, tab_estrategia = st.tabs(
         [
             "Dashboard",
             "Despesas",
@@ -1062,6 +1087,7 @@ def main() -> None:
             "Entradas Extras",
             "Fluxo de Caixa Projetado",
             "Realizado vs. Projetado",
+            "Estratégia de Dívidas 🚀",
         ]
     )
 
@@ -2503,6 +2529,93 @@ def main() -> None:
                 use_container_width=True,
                 hide_index=True,
             )
+
+
+    # ── Estratégia de Dívidas ─────────────────────────────────────────────────
+    with tab_estrategia:
+        st.subheader("Estratégia de Dívidas 🚀")
+        st.caption(
+            "Acompanhe cada dívida, marque como quitada e visualize o "
+            "**fôlego mensal liberado** conforme você elimina compromissos."
+        )
+
+        dividas = carregar_dividas(conn)
+
+        if dividas.empty:
+            st.warning(
+                "Tabela `dividas_estrategicas` não encontrada ou vazia. "
+                "Crie a tabela no Supabase com as colunas: "
+                "`id, nome, instituicao, valor_quitacao_alvo, parcela_mensal, "
+                "status, regra_ouro, ordem_pagamento, observacao`."
+            )
+        else:
+            # ── Métricas de topo ─────────────────────────────────────────────
+            folego = float(
+                dividas.loc[dividas["status"] == "QUITADA", "parcela_mensal"]
+                .fillna(0)
+                .sum()
+            )
+            total_pendente = float(
+                dividas.loc[dividas["status"] != "QUITADA", "valor_quitacao_alvo"]
+                .fillna(0)
+                .sum()
+            )
+
+            m1, m2 = st.columns(2)
+            m1.metric(
+                "💸 Fôlego Mensal Liberado",
+                brl(folego),
+                help="Soma das parcelas das dívidas já quitadas — dinheiro que voltou ao caixa.",
+            )
+            m2.metric(
+                "🔴 Total Pendente",
+                brl(total_pendente),
+                help="Soma do valor de quitação alvo de todas as dívidas ainda pendentes.",
+            )
+
+            st.divider()
+
+            # ── Lista de dívidas ─────────────────────────────────────────────
+            for _, row in dividas.iterrows():
+                nome        = str(row.get("nome") or row.get("instituicao") or f"Dívida #{row['id']}")
+                status      = str(row.get("status") or "Pendente")
+                parcela     = float(row.get("parcela_mensal") or 0)
+                alvo        = float(row.get("valor_quitacao_alvo") or 0)
+                regra_ouro  = bool(row.get("regra_ouro") or False)
+                obs         = str(row.get("observacao") or "")
+                inst        = str(row.get("instituicao") or "")
+
+                icon = "✅" if status == "QUITADA" else "⏳"
+                label = f"{icon} {nome}"
+                if inst and inst != nome:
+                    label += f" — {inst}"
+
+                with st.expander(label, expanded=(status != "QUITADA")):
+                    c1, c2 = st.columns(2)
+                    c1.markdown(f"**Parcela mensal:** {brl(parcela)}")
+                    c2.markdown(f"**Valor para quitar:** {brl(alvo)}")
+
+                    if obs:
+                        st.caption(obs)
+
+                    if regra_ouro:
+                        st.info(
+                            "⚠️ **Regra de Ouro:** esta dívida tem taxa menor que o retorno "
+                            "esperado dos seus investimentos — **não antecipe** o pagamento.",
+                            icon="💡",
+                        )
+
+                    if status == "QUITADA":
+                        st.success(f"✅ Dívida quitada! Parcela de **{brl(parcela)}/mês** liberada no caixa.")
+                    else:
+                        btn_key = f"quitar_{row['id']}"
+                        if st.button(f"Marcar como Quitada — {nome}", key=btn_key, type="primary"):
+                            try:
+                                atualizar_status_divida(conn, int(row["id"]))
+                                st.success(f"🎉 {nome} marcada como QUITADA!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erro ao atualizar: {e}")
 
 
 if __name__ == "__main__":
