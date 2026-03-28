@@ -303,16 +303,23 @@ class PgConn:
 
 
 def _read_pg_url() -> str | None:
-    """Lê URL Supabase de .streamlit/secrets.toml; retorna None se ausente."""
-    secrets_path = BASE_DIR / ".streamlit" / "secrets.toml"
-    if not secrets_path.exists():
-        return None
-    try:
-        import toml  # já no venv
-        data = toml.load(str(secrets_path))
-        return data.get("connections", {}).get("postgresql", {}).get("url")
-    except Exception:
-        return None
+    """Lê URL Supabase de secrets.toml — dev local ou Streamlit Cloud."""
+    candidates = [
+        BASE_DIR / ".streamlit" / "secrets.toml",    # dev local
+        Path.home() / ".streamlit" / "secrets.toml", # Streamlit Cloud
+    ]
+    for secrets_path in candidates:
+        if not secrets_path.exists():
+            continue
+        try:
+            import toml  # já no venv
+            data = toml.load(str(secrets_path))
+            url = data.get("connections", {}).get("postgresql", {}).get("url")
+            if url:
+                return url
+        except Exception:
+            continue
+    return None
 
 
 def _pg_connect(url: str) -> PgConn:
