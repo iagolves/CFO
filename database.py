@@ -232,6 +232,8 @@ def _sqlite_to_pg(sql: str) -> str:
     sql = _re.sub(r"\bdate\((\w+)\)", r"\1::date", sql, flags=_re.IGNORECASE)
     # 5. datetime('now') → NOW()
     sql = _re.sub(r"datetime\('now'\)", "NOW()", sql, flags=_re.IGNORECASE)
+    # 6. COLLATE NOCASE → (sem suporte nativo; PostgreSQL é case-sensitive por padrão)
+    sql = _re.sub(r"\s+COLLATE\s+NOCASE\b", "", sql, flags=_re.IGNORECASE)
     return sql
 
 
@@ -276,6 +278,10 @@ class _PgCursor:
             yield _PgRow(row)
 
     @property
+    def description(self):
+        return self._cur.description
+
+    @property
     def rowcount(self) -> int:
         return self._cur.rowcount
 
@@ -300,6 +306,29 @@ class PgConn:
 
     def close(self) -> None:
         self._conn.close()
+
+
+def read_sql(sql: str, conn, params=None):
+    """Executa SQL e retorna DataFrame — compatível com SQLite e PgConn.
+
+    Substituto de pd.read_sql_query() que funciona com nosso wrapper PgConn
+    (psycopg2) sem depender de SQLAlchemy.
+    """
+    import pandas as _pd
+
+    cur = conn.execute(sql, params) if params else conn.execute(sql)
+    rows = cur.fetchall()
+
+    # Obtém nomes das colunas
+    if rows:
+        cols = list(rows[0].keys())
+        data = [[row[k] for k in cols] for row in rows]
+    else:
+        desc = getattr(cur, "description", None)
+        cols = [d[0] for d in desc] if desc else []
+        data = []
+
+    return _pd.DataFrame(data, columns=cols)
 
 
 def _read_pg_url() -> str | None:

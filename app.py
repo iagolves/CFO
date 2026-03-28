@@ -486,7 +486,7 @@ def build_realizado_previsto_df(
     Realizado: entradas/saídas reais em `transacoes` por mês.
     Previsto: honorários teóricos + faturas cartões (estimativa) + provisões do mês.
     """
-    real = pd.read_sql_query(
+    real = db.read_sql(
         """
         SELECT
           strftime('%Y-%m', data) AS ym,
@@ -1238,7 +1238,7 @@ def main() -> None:
             "aqui para o caixa; depois registre o abatimento na aba **Dívidas**. Compras no crédito: aba **Cartões**."
         )
 
-        contas_df = pd.read_sql_query(
+        contas_df = db.read_sql(
             "SELECT id, nome FROM contas_bancarias ORDER BY nome COLLATE NOCASE",
             conn,
         )
@@ -1324,7 +1324,7 @@ def main() -> None:
         st.divider()
         st.markdown("##### Realizar provisão (gera lançamento em conta)")
         try:
-            pend = pd.read_sql_query(
+            pend = db.read_sql(
                 """
                 SELECT id, data_prevista, descricao, valor_previsto, categoria
                 FROM despesas_provisionadas
@@ -1436,7 +1436,7 @@ def main() -> None:
                         st.rerun()
 
         try:
-            hist_prov = pd.read_sql_query(
+            hist_prov = db.read_sql(
                 """
                 SELECT id, data_prevista, descricao, valor_previsto, realizado,
                        data_realizada, valor_real
@@ -1461,7 +1461,7 @@ def main() -> None:
         )
         competencia = date(ref.year, ref.month, 1).isoformat()
 
-        df = pd.read_sql_query(
+        df = db.read_sql(
             """
             SELECT
               c.id AS cliente_id,
@@ -1521,7 +1521,7 @@ def main() -> None:
             st.success("Nova dívida salva em `dividas_emprestimos`.")
 
         try:
-            ddf = pd.read_sql_query(
+            ddf = db.read_sql(
                 """
                 SELECT
                   id,
@@ -1688,7 +1688,7 @@ def main() -> None:
 
                     with st.expander(f"Histórico e abatimento manual — id {did}", expanded=False):
                         try:
-                            pags = pd.read_sql_query(
+                            pags = db.read_sql(
                                 """
                                 SELECT data_pagamento, valor, observacao, created_at
                                 FROM pagamentos_dividas
@@ -1846,7 +1846,7 @@ def main() -> None:
                                 else _hint_sql_erro(e)
                             )
 
-        cart_df = pd.read_sql_query(
+        cart_df = db.read_sql(
             """
             SELECT id, nome FROM cartoes_credito
             ORDER BY nome COLLATE NOCASE
@@ -1937,7 +1937,7 @@ def main() -> None:
         col_keys = _meses_colunas(mat_ini, int(n_meses_mat))
         col_labels = [k[:7] for k in col_keys]
         try:
-            fat_all = pd.read_sql_query(
+            fat_all = db.read_sql(
                 """
                 SELECT cartao_id, mes_referencia, valor_total, status_pago
                 FROM faturas_pagas
@@ -1973,7 +1973,7 @@ def main() -> None:
 
         st.divider()
         st.markdown("##### Faturas pendentes — pagar")
-        contas_pg = pd.read_sql_query(
+        contas_pg = db.read_sql(
             "SELECT id, nome FROM contas_bancarias ORDER BY nome COLLATE NOCASE",
             conn,
         )
@@ -2018,7 +2018,7 @@ def main() -> None:
 
         with st.expander("Cadastro completo de cartões (`cartoes_credito`)", expanded=False):
             try:
-                cartoes_db = pd.read_sql_query(
+                cartoes_db = db.read_sql(
                     """
                     SELECT id, nome, limite, melhor_dia_compra, dia_vencimento, created_at
                     FROM cartoes_credito
@@ -2177,7 +2177,7 @@ def main() -> None:
         st.markdown("##### Receber provisões")
         st.caption("Baixa de lançamentos **Provisionado** → **Realizado** (atualiza data se informada).")
         try:
-            prov_ee = pd.read_sql_query(
+            prov_ee = db.read_sql(
                 """
                 SELECT id, data, descricao, valor, categoria
                 FROM entradas_extras
@@ -2220,7 +2220,7 @@ def main() -> None:
         st.markdown("### Lançamentos cadastrados")
         try:
             if "ee_table" not in st.session_state:
-                st.session_state.ee_table = pd.read_sql_query(
+                st.session_state.ee_table = db.read_sql(
                     """
                     SELECT id, data, descricao, valor, categoria, origem, status
                     FROM entradas_extras
@@ -2265,7 +2265,7 @@ def main() -> None:
             )
             if st.button("Salvar alterações na tabela", key="ee_btn_save"):
                 _sync_entradas_extras_editor(conn, st.session_state.ee_table, edited_ee)
-                _df_ee = pd.read_sql_query(
+                _df_ee = db.read_sql(
                     """
                     SELECT id, data, descricao, valor, categoria, origem, status
                     FROM entradas_extras
