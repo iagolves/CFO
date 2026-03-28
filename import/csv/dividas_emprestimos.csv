@@ -1,0 +1,3 @@
+id,tipo,instituicao,descricao,valor_total,taxa_juros_mensal_pct,taxa_implicita,valor_parcela,parcelas_restantes,saldo_quitacao,prioridade,ativo,termino_previsto,observacoes
+99999999-9999-4999-8999-999999990001,Empréstimo,Itaú Azul,Empréstimo Itaú Azul,5346.20,6.8000,false,1336.55,4,3785.59,2,true,10/2026,Linha 2 da aba AUDITORIA_DETALHADA (exemplo)
+aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa0002,Empréstimo,Mercado Pago,Dinheiro Extra MP,1077.70,18.3300,false,1077.70,1,941.47,1,true,04/2026,Ex.: ~220% a.a. nominal a partir de 18.33% a.m. no CSV

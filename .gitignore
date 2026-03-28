@@ -1,0 +1,38 @@
+# ── Segredos e credenciais — NUNCA subir ──────────────────────────────────────
+.streamlit/secrets.toml
+
+# ── Banco de dados local ──────────────────────────────────────────────────────
+database.db
+cfo_pessoal.sqlite
+*.db
+*.sqlite
+
+# ── Planilha pessoal ──────────────────────────────────────────────────────────
+CFO_Pessoal_Iago.xlsx
+BPO - Pessoal/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+venv/
+.venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── IDEs ──────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log

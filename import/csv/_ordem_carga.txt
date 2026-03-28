@@ -1,0 +1,18 @@
+Ordem sugerida (respeitar FKs):
+1) parametros_financeiros.csv
+2) cartoes_credito.csv
+3) contas_bancarias.csv
+4) clientes_completo.csv  ← 20 clientes da aba RECEITAS_CLIENTES (use no lugar de clientes.csv)
+5) dividas_emprestimos.csv
+6) receitas.csv
+7) transacoes.csv
+
+Encoding: UTF-8. Separador: vírgula. Cabeçalho na primeira linha.
+
+Conferência: soma de valor_honorario em clientes_completo.csv = R$ 6.330,00 (carteira plena
+com Kelly + Assoc. Padre Lúcio a partir de Abr/2026). O cabeçalho R$ 6.000/mês na planilha
+alinha com o cenário sem essas duas linhas ainda em março/26.
+
+UUIDs estáveis: prefixo 11111111-1111-4111-8111- + sufixo em hex = número da linha do cliente (01…14 hex = clientes 1…20).
+
+Não carregue clientes.csv e clientes_completo.csv no mesmo banco sem truncar clientes antes (UNIQUE em nome).
