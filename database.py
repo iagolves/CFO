@@ -234,6 +234,8 @@ def _sqlite_to_pg(sql: str) -> str:
     sql = _re.sub(r"datetime\('now'\)", "NOW()", sql, flags=_re.IGNORECASE)
     # 6. COLLATE NOCASE → (sem suporte nativo; PostgreSQL é case-sensitive por padrão)
     sql = _re.sub(r"\s+COLLATE\s+NOCASE\b", "", sql, flags=_re.IGNORECASE)
+    # 7. last_insert_rowid() → lastval()  (PostgreSQL usa sequências SERIAL)
+    sql = _re.sub(r"\blast_insert_rowid\(\)", "lastval()", sql, flags=_re.IGNORECASE)
     return sql
 
 
