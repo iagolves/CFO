@@ -18,6 +18,7 @@ import streamlit as st
 import database as db
 
 APP_DIR = Path(__file__).resolve().parent
+DATABASE_FILE = (APP_DIR / "database.db").resolve()
 # Conexão gerenciada por database.py → PgConn (psycopg2) ou SQLite local (fallback).
 
 # Resumo de faturas: rótulo exibido + nome exato em `cartoes_credito` (import/csv/cartoes_credito.csv).
