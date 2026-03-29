@@ -1083,7 +1083,7 @@ def main() -> None:
             db.init_database(force_reload=True)
             st.rerun()
 
-    tab_dash, tab_desp, tab_cli, tab_car, tab_ee, tab_flux, tab_rp, tab_estrategia = st.tabs(
+    tab_dash, tab_desp, tab_cli, tab_car, tab_ee, tab_flux, tab_rp, tab_estrategia, tab_extrato = st.tabs(
         [
             "Dashboard",
             "Despesas",
@@ -1093,6 +1093,7 @@ def main() -> None:
             "Fluxo de Caixa Projetado",
             "Realizado vs. Projetado",
             "Estratégia de Dívidas 🚀",
+            "Extrato Mensal 📊",
         ]
     )
 
@@ -2405,6 +2406,217 @@ def main() -> None:
                                     st.error(f"Erro ao atualizar: {e}")
 
                 st.divider()
+
+
+    # ── Extrato Mensal ────────────────────────────────────────────────────────
+    with tab_extrato:
+        st.subheader("Extrato Mensal 📊")
+        st.caption("Entradas e saídas reais por mês, filtráveis por categoria.")
+
+        # ── Carrega dados brutos ──────────────────────────────────────────────
+        try:
+            df_trans_ent = db.read_sql(
+                """
+                SELECT strftime('%Y-%m', data) AS ym, categoria,
+                       SUM(valor) AS total
+                FROM transacoes
+                WHERE valor > 0 AND realizado = 1
+                GROUP BY ym, categoria
+                ORDER BY ym
+                """, conn)
+        except Exception:
+            df_trans_ent = pd.DataFrame(columns=["ym", "categoria", "total"])
+
+        try:
+            df_ee = db.read_sql(
+                """
+                SELECT strftime('%Y-%m', data) AS ym, categoria,
+                       SUM(valor) AS total
+                FROM entradas_extras
+                WHERE status = 'Realizado'
+                GROUP BY ym, categoria
+                ORDER BY ym
+                """, conn)
+        except Exception:
+            df_ee = pd.DataFrame(columns=["ym", "categoria", "total"])
+
+        try:
+            df_saidas = db.read_sql(
+                """
+                SELECT strftime('%Y-%m', data) AS ym, categoria,
+                       SUM(-valor) AS total
+                FROM transacoes
+                WHERE valor < 0 AND realizado = 1
+                GROUP BY ym, categoria
+                ORDER BY ym
+                """, conn)
+        except Exception:
+            df_saidas = pd.DataFrame(columns=["ym", "categoria", "total"])
+
+        # Consolida entradas: transacoes positivas + entradas_extras
+        df_entradas = pd.concat([df_trans_ent, df_ee], ignore_index=True)
+        if not df_entradas.empty:
+            df_entradas = (
+                df_entradas.groupby(["ym", "categoria"], as_index=False)["total"].sum()
+            )
+
+        all_ym = sorted(set(
+            df_entradas["ym"].tolist() + df_saidas["ym"].tolist()
+        ))
+
+        if not all_ym:
+            st.info("Nenhum lançamento realizado encontrado.")
+        else:
+            # ── Filtros ───────────────────────────────────────────────────────
+            f1, f2 = st.columns(2)
+            with f1:
+                ym_ini = st.selectbox(
+                    "A partir de",
+                    all_ym,
+                    index=max(0, len(all_ym) - 6),
+                    format_func=lambda v: f"{v[5:]}/{v[:4]}",
+                    key="ext_ym_ini",
+                )
+            with f2:
+                ym_fim = st.selectbox(
+                    "Até",
+                    all_ym,
+                    index=len(all_ym) - 1,
+                    format_func=lambda v: f"{v[5:]}/{v[:4]}",
+                    key="ext_ym_fim",
+                )
+
+            cats_ent_disp = sorted(df_entradas["categoria"].dropna().unique().tolist())
+            cats_sai_disp = sorted(df_saidas["categoria"].dropna().unique().tolist())
+
+            f3, f4 = st.columns(2)
+            with f3:
+                cats_ent_sel = st.multiselect(
+                    "Categorias de entrada",
+                    cats_ent_disp,
+                    default=cats_ent_disp,
+                    key="ext_cats_ent",
+                )
+            with f4:
+                cats_sai_sel = st.multiselect(
+                    "Categorias de saída",
+                    cats_sai_disp,
+                    default=cats_sai_disp,
+                    key="ext_cats_sai",
+                )
+
+            # ── Aplica filtros ────────────────────────────────────────────────
+            mask_ym_e = (df_entradas["ym"] >= ym_ini) & (df_entradas["ym"] <= ym_fim)
+            mask_ym_s = (df_saidas["ym"] >= ym_ini) & (df_saidas["ym"] <= ym_fim)
+
+            ent_f = df_entradas[mask_ym_e & df_entradas["categoria"].isin(cats_ent_sel)]
+            sai_f = df_saidas[mask_ym_s & df_saidas["categoria"].isin(cats_sai_sel)]
+
+            ym_range = [y for y in all_ym if ym_ini <= y <= ym_fim]
+
+            ent_por_mes = ent_f.groupby("ym")["total"].sum()
+            sai_por_mes = sai_f.groupby("ym")["total"].sum()
+
+            total_ent = float(ent_por_mes.sum())
+            total_sai = float(sai_por_mes.sum())
+            saldo_liq  = total_ent - total_sai
+
+            # ── Métricas ──────────────────────────────────────────────────────
+            m1, m2, m3 = st.columns(3)
+            m1.metric("🟢 Total Entradas", brl(total_ent))
+            m2.metric("🔴 Total Saídas",   brl(total_sai))
+            delta_color = "normal" if saldo_liq >= 0 else "inverse"
+            m3.metric("💰 Saldo Líquido",  brl(saldo_liq),
+                      delta=brl(saldo_liq), delta_color=delta_color)
+
+            st.divider()
+
+            # ── Gráfico barras agrupadas ──────────────────────────────────────
+            fig_ext = go.Figure()
+            fig_ext.add_bar(
+                x=ym_range,
+                y=[float(ent_por_mes.get(y, 0)) for y in ym_range],
+                name="Entradas",
+                marker_color="#4ade80",
+            )
+            fig_ext.add_bar(
+                x=ym_range,
+                y=[float(sai_por_mes.get(y, 0)) for y in ym_range],
+                name="Saídas",
+                marker_color="#f87171",
+            )
+            fig_ext.update_layout(
+                barmode="group",
+                plot_bgcolor="#121212",
+                paper_bgcolor="#121212",
+                font_color="#E0E0E0",
+                legend=dict(orientation="h", y=1.1),
+                margin=dict(l=0, r=0, t=30, b=0),
+                xaxis=dict(tickformat="%m/%Y" if False else None),
+            )
+            st.plotly_chart(fig_ext, use_container_width=True)
+
+            # ── Tabela resumo por mês ─────────────────────────────────────────
+            resumo_rows = []
+            for y in ym_range:
+                e = float(ent_por_mes.get(y, 0))
+                s = float(sai_por_mes.get(y, 0))
+                resumo_rows.append({
+                    "Mês": f"{y[5:]}/{y[:4]}",
+                    "Entradas": e,
+                    "Saídas": s,
+                    "Saldo": e - s,
+                })
+            # linha total
+            resumo_rows.append({
+                "Mês": "📊 TOTAL",
+                "Entradas": total_ent,
+                "Saídas": total_sai,
+                "Saldo": saldo_liq,
+            })
+            df_resumo = pd.DataFrame(resumo_rows)
+            st.dataframe(
+                df_resumo,
+                column_config={
+                    "Entradas": st.column_config.NumberColumn(format="R$ %.2f"),
+                    "Saídas":   st.column_config.NumberColumn(format="R$ %.2f"),
+                    "Saldo":    st.column_config.NumberColumn(format="R$ %.2f"),
+                },
+                hide_index=True,
+                use_container_width=True,
+            )
+
+            # ── Detalhe por categoria ─────────────────────────────────────────
+            with st.expander("🔍 Detalhe por categoria", expanded=False):
+                st.markdown("**Entradas por categoria**")
+                if not ent_f.empty:
+                    piv_ent = (
+                        ent_f.pivot_table(
+                            index="categoria", columns="ym",
+                            values="total", aggfunc="sum", fill_value=0,
+                        )
+                        .rename(columns=lambda y: f"{y[5:]}/{y[:4]}")
+                    )
+                    piv_ent["TOTAL"] = piv_ent.sum(axis=1)
+                    piv_ent = piv_ent.reset_index().rename(columns={"categoria": "Categoria"})
+                    st.dataframe(piv_ent, hide_index=True, use_container_width=True)
+                else:
+                    st.caption("Nenhuma entrada no período/filtro.")
+
+                st.markdown("**Saídas por categoria**")
+                if not sai_f.empty:
+                    piv_sai = (
+                        sai_f.pivot_table(
+                            index="categoria", columns="ym",
+                            values="total", aggfunc="sum", fill_value=0,
+                        )
+                        .rename(columns=lambda y: f"{y[5:]}/{y[:4]}")
+                    )
+                    piv_sai["TOTAL"] = piv_sai.sum(axis=1)
+                    piv_sai = piv_sai.reset_index().rename(columns={"categoria": "Categoria"})
+                    st.dataframe(piv_sai, hide_index=True, use_container_width=True)
+                else:
+                    st.caption("Nenhuma saída no período/filtro.")
 
 
 if __name__ == "__main__":
