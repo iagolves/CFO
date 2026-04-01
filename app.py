@@ -719,7 +719,6 @@ def build_fluxo_projetado(
             SELECT cliente_id, data_competencia, data_recebimento_real
             FROM receitas
             WHERE status = 'Pago'
-              AND transacao_id IS NOT NULL
               AND data_recebimento_real IS NOT NULL
             """
         ).fetchall()
@@ -732,7 +731,11 @@ def build_fluxo_projetado(
             if data_inicio <= dr_rp <= data_fim:
                 receitas_servico[dr_rp] += honor_por_id.get(cid_rp, 0.0)
     except Exception:
-        pass
+        # Rollback obrigatório para recuperar conexão psycopg2 de estado abortado
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
     d = data_inicio
     while d <= data_fim:
