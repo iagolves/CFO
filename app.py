@@ -1563,6 +1563,13 @@ def main() -> None:
             num_rows="fixed",
             key="grid_clientes",
         )
+        data_recebimento_cli = _date_input(
+            "Data de recebimento (aplicada aos clientes marcados como **Pago**)",
+            value=date.today(),
+            key="cli_data_recebimento",
+            help="O pagamento entrará no fluxo de caixa nesta data — independente do dia de vencimento.",
+        )
+
         if st.button("Salvar pagamentos do mês", type="primary"):
             for _, row in edited.iterrows():
                 if not row["cliente_id"] or pd.isna(row["cliente_id"]):
@@ -1572,8 +1579,9 @@ def main() -> None:
                     cliente_id=int(row["cliente_id"]),
                     data_competencia=competencia,
                     status=str(row["status_pagamento"]),
+                    data_recebimento=data_recebimento_cli.isoformat(),
                 )
-            st.success("Status de receitas atualizado.")
+            st.success("Pagamentos salvos e lançados no fluxo de caixa.")
             st.rerun()
 
 

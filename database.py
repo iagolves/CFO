@@ -457,6 +457,23 @@ def _normalizar_mes_fatura(raw: object | None) -> str | None:
     return None
 
 
+def ensure_receitas_transacao_id_column(conn) -> None:
+    """Garante coluna `transacao_id` em receitas (migração)."""
+    if isinstance(conn, PgConn):
+        row = conn.execute(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = 'receitas' AND column_name = 'transacao_id'"
+        ).fetchone()
+        if row:
+            return
+    else:
+        cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(receitas)").fetchall()}
+        if "transacao_id" in cols:
+            return
+    conn.execute("ALTER TABLE receitas ADD COLUMN transacao_id INTEGER")
+    conn.commit()
+
+
 def ensure_entradas_extras_status_column(conn) -> None:
     """Garante coluna `status` (Realizado | Provisionado) em bases antigas."""
     if isinstance(conn, PgConn):
@@ -483,6 +500,7 @@ def init_schema(conn) -> None:
     if isinstance(conn, PgConn):
         # Tabelas já gerenciadas no Supabase; apenas garante colunas de migração.
         ensure_entradas_extras_status_column(conn)
+        ensure_receitas_transacao_id_column(conn)
         return
     row = conn.execute("PRAGMA user_version").fetchone()
     v = int(row[0]) if row else 0
@@ -1187,29 +1205,105 @@ def delete_entrada_extra(conn: sqlite3.Connection, row_id: int) -> None:
 
 
 def upsert_receita_mes(
-    conn: sqlite3.Connection,
+    conn,
     *,
     cliente_id: int | str,
     data_competencia: str,
     status: str,
+    data_recebimento: str | None = None,
 ) -> None:
-    """Atualiza ou cria receita do cliente no mês (único por cliente + competência)."""
+    """Atualiza ou cria receita do mês e espelha em transacoes.
+
+    Quando status='Pago':
+      - Grava data_recebimento_real (padrão: hoje) em receitas
+      - Cria (ou atualiza data de) lançamento positivo em transacoes
+      - Guarda transacao_id para permitir reversão
+
+    Quando status='Pendente':
+      - Remove o lançamento em transacoes (se existir)
+      - Limpa data_recebimento_real e transacao_id
+    """
     if status not in ("Pendente", "Pago"):
         raise ValueError("status inválido")
-    data_rec = date.today().isoformat() if status == "Pago" else None
+
     cid = int(cliente_id)
-    conn.execute(
-        """
-        INSERT INTO receitas (
-          cliente_id, data_competencia, data_recebimento_real, status
+
+    if status == "Pago":
+        data_rec = (data_recebimento or date.today().isoformat())[:10]
+
+        # Nome e valor do cliente
+        row_cli = conn.execute(
+            "SELECT nome, valor_honorario FROM clientes WHERE id = ?", (cid,)
+        ).fetchone()
+        nome_cli = str(row_cli["nome"]) if row_cli else f"Cliente {cid}"
+        valor_hon = float(row_cli["valor_honorario"]) if row_cli else 0.0
+
+        # Verifica se já existe transacao_id vinculado
+        row_rec = conn.execute(
+            "SELECT transacao_id FROM receitas WHERE cliente_id = ? AND data_competencia = ?",
+            (cid, data_competencia),
+        ).fetchone()
+        tid_atual = int(row_rec["transacao_id"]) if (row_rec and row_rec["transacao_id"]) else None
+
+        ym = data_competencia[:7]
+        _MESES = {"01":"jan","02":"fev","03":"mar","04":"abr","05":"mai","06":"jun",
+                  "07":"jul","08":"ago","09":"set","10":"out","11":"nov","12":"dez"}
+        desc = f"Honorário {nome_cli} ({_MESES.get(ym[5:],'?')}/{ym[:4]})"
+
+        if tid_atual:
+            conn.execute(
+                "UPDATE transacoes SET data = ?, valor = ? WHERE id = ?",
+                (data_rec, valor_hon, tid_atual),
+            )
+            new_tid = tid_atual
+        else:
+            conn.execute(
+                """
+                INSERT INTO transacoes (data, descricao, valor, categoria, realizado)
+                VALUES (?, ?, ?, 'Honorários', 1)
+                """,
+                (data_rec, desc, valor_hon),
+            )
+            new_tid = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+
+        conn.execute(
+            """
+            INSERT INTO receitas (
+              cliente_id, data_competencia, data_recebimento_real, status, transacao_id
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (cliente_id, data_competencia) DO UPDATE SET
+              status               = excluded.status,
+              data_recebimento_real = excluded.data_recebimento_real,
+              transacao_id         = excluded.transacao_id
+            """,
+            (cid, data_competencia, data_rec, status, new_tid),
         )
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT (cliente_id, data_competencia) DO UPDATE SET
-          status = excluded.status,
-          data_recebimento_real = excluded.data_recebimento_real
-        """,
-        (cid, data_competencia, data_rec, status),
-    )
+
+    else:  # Pendente — remove lançamento anterior se existir
+        row_rec = conn.execute(
+            "SELECT transacao_id FROM receitas WHERE cliente_id = ? AND data_competencia = ?",
+            (cid, data_competencia),
+        ).fetchone()
+        if row_rec and row_rec["transacao_id"]:
+            conn.execute(
+                "DELETE FROM transacoes WHERE id = ?", (int(row_rec["transacao_id"]),)
+            )
+
+        conn.execute(
+            """
+            INSERT INTO receitas (
+              cliente_id, data_competencia, data_recebimento_real, status, transacao_id
+            )
+            VALUES (?, ?, NULL, ?, NULL)
+            ON CONFLICT (cliente_id, data_competencia) DO UPDATE SET
+              status                = excluded.status,
+              data_recebimento_real = NULL,
+              transacao_id          = NULL
+            """,
+            (cid, data_competencia, status),
+        )
+
     conn.commit()
 
 
