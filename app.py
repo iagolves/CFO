@@ -697,9 +697,39 @@ def build_fluxo_projetado(
     except sqlite3.OperationalError:
         provisao_dia = {}
 
+    # Clientes que já têm pagamento real registrado no período (via transacao_id):
+    # entram pelo saldo real/transacoes, não pelo dia_vencimento projetado.
+    # Chave: (cliente_id, ym) → data real de recebimento
+    pagos_no_periodo: dict[tuple[int, str], date] = {}
+    try:
+        rows_pagos = conn.execute(
+            """
+            SELECT cliente_id, data_competencia, data_recebimento_real
+            FROM receitas
+            WHERE status = 'Pago'
+              AND transacao_id IS NOT NULL
+              AND data_recebimento_real IS NOT NULL
+            """
+        ).fetchall()
+        for rp in rows_pagos:
+            cid_rp = int(rp["cliente_id"])
+            ym_rp = str(rp["data_competencia"])[:7]
+            dr_rp = date.fromisoformat(str(rp["data_recebimento_real"])[:10])
+            pagos_no_periodo[(cid_rp, ym_rp)] = dr_rp
+            # Se recebido dentro da janela, soma no dia real
+            if data_inicio <= dr_rp <= data_fim:
+                cli_row = conn.execute(
+                    "SELECT valor_honorario FROM clientes WHERE id = ?", (cid_rp,)
+                ).fetchone()
+                if cli_row:
+                    receitas_servico[dr_rp] += float(cli_row["valor_honorario"])
+    except Exception:
+        pass
+
     d = data_inicio
     while d <= data_fim:
         y, m = d.year, d.month
+        ym_d = f"{y:04d}-{m:02d}"
 
         for _cid, _nome, honor, dia_v, vig in conn.execute(
             """
@@ -708,6 +738,9 @@ def build_fluxo_projetado(
             WHERE status = 'Ativo'
             """
         ):
+            # Pula se já foi pago com data real no mês — evita duplicar
+            if pagos_no_periodo.get((int(_cid), ym_d)):
+                continue
             dom = _safe_dom(int(dia_v), y, m)
             if d.day != dom:
                 continue
