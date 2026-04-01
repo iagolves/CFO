@@ -697,11 +697,23 @@ def build_fluxo_projetado(
     except sqlite3.OperationalError:
         provisao_dia = {}
 
-    # Clientes que já têm pagamento real registrado no período (via transacao_id):
-    # entram pelo saldo real/transacoes, não pelo dia_vencimento projetado.
+    # Busca clientes UMA vez (fora do loop)
+    clientes_ativos = conn.execute(
+        """
+        SELECT id, nome, valor_honorario, dia_vencimento, honorario_vigencia_inicio
+        FROM clientes
+        WHERE status = 'Ativo'
+        """
+    ).fetchall()
+
+    # Clientes com pagamento real registrado (transacao_id preenchido):
+    # entram pelo dia real, não pelo dia_vencimento projetado.
     # Chave: (cliente_id, ym) → data real de recebimento
     pagos_no_periodo: dict[tuple[int, str], date] = {}
     try:
+        # Mapa de valor_honorario por id (já carregado acima)
+        honor_por_id = {int(r["id"]): float(r["valor_honorario"]) for r in clientes_ativos}
+
         rows_pagos = conn.execute(
             """
             SELECT cliente_id, data_competencia, data_recebimento_real
@@ -718,11 +730,7 @@ def build_fluxo_projetado(
             pagos_no_periodo[(cid_rp, ym_rp)] = dr_rp
             # Se recebido dentro da janela, soma no dia real
             if data_inicio <= dr_rp <= data_fim:
-                cli_row = conn.execute(
-                    "SELECT valor_honorario FROM clientes WHERE id = ?", (cid_rp,)
-                ).fetchone()
-                if cli_row:
-                    receitas_servico[dr_rp] += float(cli_row["valor_honorario"])
+                receitas_servico[dr_rp] += honor_por_id.get(cid_rp, 0.0)
     except Exception:
         pass
 
@@ -731,14 +739,13 @@ def build_fluxo_projetado(
         y, m = d.year, d.month
         ym_d = f"{y:04d}-{m:02d}"
 
-        for _cid, _nome, honor, dia_v, vig in conn.execute(
-            """
-            SELECT id, nome, valor_honorario, dia_vencimento, honorario_vigencia_inicio
-            FROM clientes
-            WHERE status = 'Ativo'
-            """
-        ):
-            # Pula se já foi pago com data real no mês — evita duplicar
+        for cli in clientes_ativos:
+            _cid = cli["id"]
+            honor = cli["valor_honorario"]
+            dia_v = cli["dia_vencimento"]
+            vig = cli["honorario_vigencia_inicio"]
+
+            # Pula se já foi pago com data real neste mês — evita duplicar
             if pagos_no_periodo.get((int(_cid), ym_d)):
                 continue
             dom = _safe_dom(int(dia_v), y, m)
