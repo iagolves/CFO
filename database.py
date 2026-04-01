@@ -460,18 +460,19 @@ def _normalizar_mes_fatura(raw: object | None) -> str | None:
 def ensure_receitas_transacao_id_column(conn) -> None:
     """Garante coluna `transacao_id` em receitas (migração)."""
     if isinstance(conn, PgConn):
-        row = conn.execute(
-            "SELECT 1 FROM information_schema.columns "
-            "WHERE table_name = 'receitas' AND column_name = 'transacao_id'"
-        ).fetchone()
-        if row:
-            return
+        # PostgreSQL: IF NOT EXISTS evita erro se coluna já existe
+        try:
+            conn.execute(
+                "ALTER TABLE receitas ADD COLUMN IF NOT EXISTS transacao_id INTEGER"
+            )
+            conn.commit()
+        except Exception:
+            conn._conn.rollback()
     else:
         cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(receitas)").fetchall()}
-        if "transacao_id" in cols:
-            return
-    conn.execute("ALTER TABLE receitas ADD COLUMN transacao_id INTEGER")
-    conn.commit()
+        if "transacao_id" not in cols:
+            conn.execute("ALTER TABLE receitas ADD COLUMN transacao_id INTEGER")
+            conn.commit()
 
 
 def ensure_entradas_extras_status_column(conn) -> None:
