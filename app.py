@@ -641,9 +641,9 @@ def _style_realizado_previsto(df: pd.DataFrame):
 
     sty = df.style
     if "Var. receitas" in df.columns:
-        sty = sty.applymap(_green, subset=["Var. receitas"])
+        sty = sty.map(_green, subset=["Var. receitas"])
     if "Var. despesas" in df.columns:
-        sty = sty.applymap(_red, subset=["Var. despesas"])
+        sty = sty.map(_red, subset=["Var. despesas"])
     return sty.format(
         {
             "Receitas (serviço)": "R$ {:,.2f}",

@@ -1228,6 +1228,9 @@ def upsert_receita_mes(
 
     cid = int(cliente_id)
 
+    # Garante que a coluna existe (executa ALTER TABLE se necessário)
+    ensure_receitas_transacao_id_column(conn)
+
     if status == "Pago":
         data_rec = (data_recebimento or date.today().isoformat())[:10]
 
@@ -1239,11 +1242,14 @@ def upsert_receita_mes(
         valor_hon = float(row_cli["valor_honorario"]) if row_cli else 0.0
 
         # Verifica se já existe transacao_id vinculado
-        row_rec = conn.execute(
-            "SELECT transacao_id FROM receitas WHERE cliente_id = ? AND data_competencia = ?",
-            (cid, data_competencia),
-        ).fetchone()
-        tid_atual = int(row_rec["transacao_id"]) if (row_rec and row_rec["transacao_id"]) else None
+        try:
+            row_rec = conn.execute(
+                "SELECT transacao_id FROM receitas WHERE cliente_id = ? AND data_competencia = ?",
+                (cid, data_competencia),
+            ).fetchone()
+            tid_atual = int(row_rec["transacao_id"]) if (row_rec and row_rec["transacao_id"]) else None
+        except Exception:
+            tid_atual = None
 
         ym = data_competencia[:7]
         _MESES = {"01":"jan","02":"fev","03":"mar","04":"abr","05":"mai","06":"jun",
@@ -1273,22 +1279,25 @@ def upsert_receita_mes(
             )
             VALUES (?, ?, ?, ?, ?)
             ON CONFLICT (cliente_id, data_competencia) DO UPDATE SET
-              status               = excluded.status,
+              status                = excluded.status,
               data_recebimento_real = excluded.data_recebimento_real,
-              transacao_id         = excluded.transacao_id
+              transacao_id          = excluded.transacao_id
             """,
             (cid, data_competencia, data_rec, status, new_tid),
         )
 
     else:  # Pendente — remove lançamento anterior se existir
-        row_rec = conn.execute(
-            "SELECT transacao_id FROM receitas WHERE cliente_id = ? AND data_competencia = ?",
-            (cid, data_competencia),
-        ).fetchone()
-        if row_rec and row_rec["transacao_id"]:
-            conn.execute(
-                "DELETE FROM transacoes WHERE id = ?", (int(row_rec["transacao_id"]),)
-            )
+        try:
+            row_rec = conn.execute(
+                "SELECT transacao_id FROM receitas WHERE cliente_id = ? AND data_competencia = ?",
+                (cid, data_competencia),
+            ).fetchone()
+            if row_rec and row_rec["transacao_id"]:
+                conn.execute(
+                    "DELETE FROM transacoes WHERE id = ?", (int(row_rec["transacao_id"]),)
+                )
+        except Exception:
+            pass
 
         conn.execute(
             """
