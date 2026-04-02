@@ -697,11 +697,7 @@ def build_fluxo_projetado(
     except sqlite3.OperationalError:
         provisao_dia = {}
 
-    # Receitas reais de transacoes (honorários lançados + outros créditos)
-    receitas_trans_dia = db.receitas_transacoes_por_dia(conn, data_inicio, data_fim)
-
-    # Clientes já pagos no período (data_recebimento_real preenchida):
-    # NÃO projetar pelo dia_vencimento para evitar duplicar com receitas_trans_dia
+    # Clientes ativos — busca única fora do loop
     clientes_ativos = conn.execute(
         """
         SELECT id, nome, valor_honorario, dia_vencimento, honorario_vigencia_inicio
@@ -709,56 +705,70 @@ def build_fluxo_projetado(
         """
     ).fetchall()
 
-    pagos_ym: set[tuple[int, str]] = set()
+    # Para clientes pagos: usa data_recebimento_real como data do fluxo.
+    # Chave: (cliente_id, ym) → data real; ausente = projetar por dia_vencimento.
+    pagos_data_real: dict[tuple[int, str], date] = {}
     try:
         rows_pagos = conn.execute(
             """
-            SELECT cliente_id, data_competencia
+            SELECT cliente_id, data_competencia, data_recebimento_real
             FROM receitas
             WHERE status = 'Pago' AND data_recebimento_real IS NOT NULL
             """
         ).fetchall()
         for rp in rows_pagos:
-            pagos_ym.add((int(rp["cliente_id"]), str(rp["data_competencia"])[:7]))
+            cid_rp = int(rp["cliente_id"])
+            ym_rp = str(rp["data_competencia"])[:7]
+            dr_rp = date.fromisoformat(str(rp["data_recebimento_real"])[:10])
+            pagos_data_real[(cid_rp, ym_rp)] = dr_rp
     except Exception:
         try:
             conn.rollback()
         except Exception:
             pass
 
-    d = data_inicio
-    while d <= data_fim:
-        y, m = d.year, d.month
-        ym_d = f"{y:04d}-{m:02d}"
+    # Meses que a janela cobre (ex: ['2026-03', '2026-04'])
+    meses_janela: set[str] = set()
+    d_tmp = data_inicio
+    while d_tmp <= data_fim:
+        meses_janela.add(f"{d_tmp.year:04d}-{d_tmp.month:02d}")
+        d_tmp += timedelta(days=28)
+    meses_janela.add(f"{data_fim.year:04d}-{data_fim.month:02d}")
 
-        for cli in clientes_ativos:
-            _cid = cli["id"]
-            honor = cli["valor_honorario"]
-            dia_v = cli["dia_vencimento"]
-            vig = cli["honorario_vigencia_inicio"]
+    for cli in clientes_ativos:
+        _cid = int(cli["id"])
+        honor = float(cli["valor_honorario"])
+        dia_v = int(cli["dia_vencimento"])
+        vig = cli["honorario_vigencia_inicio"]
 
-            # Já tem lançamento real em transacoes — não projetar
-            if (int(_cid), ym_d) in pagos_ym:
-                continue
-            dom = _safe_dom(int(dia_v), y, m)
-            if d.day != dom:
-                continue
+        for ym in meses_janela:
+            y_m, m_m = int(ym[:4]), int(ym[5:])
+
             if vig is not None and str(vig).strip():
                 try:
                     vig_d = date.fromisoformat(str(vig)[:10])
+                    if date(y_m, m_m, 1) < vig_d:
+                        continue
                 except ValueError:
-                    vig_d = None
-                if vig_d is not None and d < vig_d:
-                    continue
-            receitas_servico[d] += float(honor)
+                    pass
 
-        d += timedelta(days=1)
+            if (_cid, ym) in pagos_data_real:
+                # Pago: usa data real de recebimento
+                d_real = pagos_data_real[(_cid, ym)]
+                if data_inicio <= d_real <= data_fim:
+                    receitas_servico[d_real] += honor
+            else:
+                # Pendente: projeta no dia de vencimento
+                dom = _safe_dom(dia_v, y_m, m_m)
+                d_proj = date(y_m, m_m, dom)
+                if data_inicio <= d_proj <= data_fim:
+                    receitas_servico[d_proj] += honor
 
     rows: list[dict[str, object]] = []
     saldo = saldo0
     d = data_inicio
     while d <= data_fim:
-        r_svc = float(receitas_servico.get(d, 0.0)) + float(receitas_trans_dia.get(d, 0.0))
+        r_svc = float(receitas_servico.get(d, 0.0))
         r_ext = float(extras_real_dia.get(d, 0.0))
         r_ext_prev = float(extras_prov_dia.get(d, 0.0))
         r = r_svc + r_ext + r_ext_prev
