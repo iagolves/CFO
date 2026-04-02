@@ -1683,6 +1683,39 @@ def despesas_faturas_nao_pagas_por_dia(
     return dict(out)
 
 
+def receitas_transacoes_por_dia(
+    conn,
+    d0: date,
+    d1: date,
+) -> dict[date, float]:
+    """Entradas reais em transacoes (valor > 0, realizado=1) por dia.
+
+    Inclui honorários lançados manualmente e quaisquer outros créditos diretos.
+    """
+    from collections import defaultdict
+
+    out: defaultdict[date, float] = defaultdict(float)
+    for row in conn.execute(
+        """
+        SELECT data, COALESCE(SUM(valor), 0) AS t
+        FROM transacoes
+        WHERE valor > 0
+          AND realizado = 1
+          AND date(data) >= date(?)
+          AND date(data) <= date(?)
+        GROUP BY data
+        """,
+        (d0.isoformat(), d1.isoformat()),
+    ):
+        ds = str(row[0])[:10]
+        try:
+            dv = date.fromisoformat(ds)
+        except ValueError:
+            continue
+        out[dv] += float(row[1])
+    return dict(out)
+
+
 def despesas_debito_real_por_dia(
     conn: sqlite3.Connection,
     d0: date,
