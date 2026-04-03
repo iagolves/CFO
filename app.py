@@ -2203,8 +2203,6 @@ def main() -> None:
             value=date.today(),
             key="fluxo_ref_venc",
         )
-        saldo_hoje = db.saldo_caixa_total(conn)
-
         # ── Modo de período ─────────────────────────────────────────────────
         _MESES_PT_FLUX = [
             "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
