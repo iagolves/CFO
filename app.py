@@ -2224,7 +2224,7 @@ def main() -> None:
             with mf1:
                 fluxo_ini = _date_input(
                     "Início da série",
-                    value=date(2026, 3, 1),
+                    value=date(2026, 3, 31),
                     key="fluxo_serie_ini",
                     help="Data a partir de quando o saldo começa a acumular. "
                          "Use o mês em que você começou a lançar os dados.",
