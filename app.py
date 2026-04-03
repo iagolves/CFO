@@ -2242,15 +2242,18 @@ def main() -> None:
                 _mes_num_flux,
                 _last_day_of_month(_ano_num_flux, _mes_num_flux),
             )
-            # Inicia sempre de hoje para manter a continuidade do saldo projetado.
-            # Se o mês já passou, inicia do 1º dia do mês.
             _primeiro_dia_mes = date(_ano_num_flux, _mes_num_flux, 1)
-            fluxo_ini = min(date.today(), _primeiro_dia_mes)
+            # Mês futuro ou atual: começa de hoje → saldo real como base, acumula
+            # até o fim do mês escolhido.
+            # Mês passado: começa do dia 1 do mês para ver o histórico completo.
+            if _ultimo_dia_mes >= date.today():
+                fluxo_ini = date.today()
+            else:
+                fluxo_ini = _primeiro_dia_mes
             n_dias_proj = (_ultimo_dia_mes - fluxo_ini).days + 1
             st.caption(
                 f"Projetando de **{fluxo_ini.strftime('%d/%m/%Y')}** até "
-                f"**{_ultimo_dia_mes.strftime('%d/%m/%Y')}** "
-                f"({n_dias_proj} dias). O saldo acumula a partir do saldo real de hoje."
+                f"**{_ultimo_dia_mes.strftime('%d/%m/%Y')}** ({n_dias_proj} dias)."
             )
         else:
             r_cfg1, r_cfg2 = st.columns(2)
