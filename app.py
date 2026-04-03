@@ -2205,22 +2205,60 @@ def main() -> None:
         )
         saldo_hoje = db.saldo_caixa_total(conn)
 
-        r_cfg1, r_cfg2 = st.columns(2)
-        with r_cfg1:
-            fluxo_ini = _date_input(
-                "Início da projeção",
-                value=date.today(),
-                key="fluxo_data_ini",
+        # ── Modo de período ─────────────────────────────────────────────────
+        _MESES_PT_FLUX = [
+            "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+            "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+        ]
+        _ANOS_FLUX = list(range(2024, 2029))
+
+        modo_flux = st.radio(
+            "Período",
+            ["📅 Mês completo", "🔧 Intervalo personalizado"],
+            horizontal=True,
+            key="fluxo_modo",
+        )
+
+        if modo_flux == "📅 Mês completo":
+            mf1, mf2 = st.columns(2)
+            with mf1:
+                mes_flux_sel = st.selectbox(
+                    "Mês",
+                    _MESES_PT_FLUX,
+                    index=date.today().month - 1,
+                    key="fluxo_mes_sel",
+                )
+            with mf2:
+                ano_flux_sel = st.selectbox(
+                    "Ano",
+                    _ANOS_FLUX,
+                    index=_ANOS_FLUX.index(date.today().year) if date.today().year in _ANOS_FLUX else 0,
+                    key="fluxo_ano_sel",
+                )
+            _mes_num_flux = _MESES_PT_FLUX.index(mes_flux_sel) + 1
+            fluxo_ini = date(int(ano_flux_sel), _mes_num_flux, 1)
+            n_dias_proj = _last_day_of_month(int(ano_flux_sel), _mes_num_flux)
+            st.caption(
+                f"Projetando **{mes_flux_sel}/{ano_flux_sel}** — "
+                f"01/{_mes_num_flux:02d} a {n_dias_proj:02d}/{_mes_num_flux:02d}/{ano_flux_sel}."
             )
-        with r_cfg2:
-            n_dias_proj = st.number_input(
-                "Quantidade de dias",
-                min_value=7,
-                max_value=120,
-                value=45,
-                step=1,
-                key="fluxo_n_dias",
-            )
+        else:
+            r_cfg1, r_cfg2 = st.columns(2)
+            with r_cfg1:
+                fluxo_ini = _date_input(
+                    "Início da projeção",
+                    value=date.today(),
+                    key="fluxo_data_ini",
+                )
+            with r_cfg2:
+                n_dias_proj = st.number_input(
+                    "Quantidade de dias",
+                    min_value=7,
+                    max_value=120,
+                    value=45,
+                    step=1,
+                    key="fluxo_n_dias",
+                )
 
         fluxo_df, saldo0, data_pior = build_fluxo_projetado(
             conn, fluxo_ini, int(n_dias_proj)
