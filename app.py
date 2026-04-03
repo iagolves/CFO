@@ -2279,13 +2279,7 @@ def main() -> None:
             else float(saldo0)
         )
 
-        k0, k1, k2, k3 = st.columns(4)
-        with k0:
-            st.metric(
-                "Saldo atual (caixa)",
-                brl(saldo_hoje),
-                help="Transações **realizadas** + entradas extras (base da linha de saldo projetado).",
-            )
+        k1, k2, k3 = st.columns(3)
         with k1:
             st.metric(
                 "Pior saldo projetado",
@@ -2300,10 +2294,13 @@ def main() -> None:
             )
             st.metric("Dia do maior aperto", dp)
         with k3:
+            saldo_final = float(fluxo_df["saldo_projetado"].iloc[-1]) if not fluxo_df.empty else saldo0
             st.metric(
-                "Saldo inicial (base)",
-                brl(saldo0),
-                help="Só transações **realizadas** + entradas extras, até antes do 1º dia da projeção.",
+                "Saldo projetado (fim do período)",
+                brl(saldo_final),
+                delta=brl(saldo_final - saldo0),
+                delta_color="normal",
+                help="Saldo projetado no último dia da janela.",
             )
 
         col_ven = st.container()
