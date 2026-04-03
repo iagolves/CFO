@@ -2220,23 +2220,15 @@ def main() -> None:
         )
 
         if modo_flux == "📅 Mês completo":
-            mf1, mf2, mf3 = st.columns(3)
+            mf1, mf2 = st.columns(2)
             with mf1:
-                fluxo_ini = _date_input(
-                    "Início da série",
-                    value=date(2026, 3, 31),
-                    key="fluxo_serie_ini",
-                    help="Data a partir de quando o saldo começa a acumular. "
-                         "Use o mês em que você começou a lançar os dados.",
-                )
-            with mf2:
                 mes_flux_sel = st.selectbox(
-                    "Mês de destino",
+                    "Mês",
                     _MESES_PT_FLUX,
                     index=date.today().month - 1,
                     key="fluxo_mes_sel",
                 )
-            with mf3:
+            with mf2:
                 ano_flux_sel = st.selectbox(
                     "Ano",
                     _ANOS_FLUX,
@@ -2250,9 +2242,13 @@ def main() -> None:
                 _mes_num_flux,
                 _last_day_of_month(_ano_num_flux, _mes_num_flux),
             )
+            # Sempre começa de 31/03/2026 — início fixo dos lançamentos.
+            # O saldo acumula de lá até o fim do mês escolhido, garantindo
+            # que as provisões de Abril impactem corretamente o saldo de Maio.
+            fluxo_ini = date(2026, 3, 31)
             n_dias_proj = (_ultimo_dia_mes - fluxo_ini).days + 1
             st.caption(
-                f"Acumulando de **{fluxo_ini.strftime('%d/%m/%Y')}** até "
+                f"Acumulando de **31/03/2026** até "
                 f"**{_ultimo_dia_mes.strftime('%d/%m/%Y')}** ({n_dias_proj} dias)."
             )
         else:
