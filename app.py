@@ -1559,7 +1559,8 @@ def main() -> None:
               c.nome,
               c.dia_vencimento,
               c.valor_honorario,
-              COALESCE(r.status, 'Pendente') AS status_pagamento
+              COALESCE(r.status, 'Pendente') AS status_pagamento,
+              r.data_recebimento_real AS data_recebimento
             FROM clientes c
             LEFT JOIN receitas r
               ON r.cliente_id = c.id AND r.data_competencia = ?
@@ -1570,6 +1571,10 @@ def main() -> None:
             params=(competencia,),
         )
 
+        # Converte coluna de data para tipo date (pode vir como string)
+        if not df.empty and "data_recebimento" in df.columns:
+            df["data_recebimento"] = pd.to_datetime(df["data_recebimento"], errors="coerce").dt.date
+
         # Linha de total
         if not df.empty:
             total_hon = df["valor_honorario"].fillna(0).sum()
@@ -1579,11 +1584,13 @@ def main() -> None:
                 "dia_vencimento": None,
                 "valor_honorario": total_hon,
                 "status_pagamento": "",
+                "data_recebimento": None,
             }])
             df_view = pd.concat([df, soma_row], ignore_index=True)
         else:
             df_view = df
 
+        st.caption("Defina o status de cada cliente e a data de recebimento individual (coluna **Data Receb.**). Clientes sem data usarão a data padrão abaixo.")
         edited = st.data_editor(
             df_view,
             column_config={
@@ -1600,28 +1607,42 @@ def main() -> None:
                     options=["Pendente", "Pago", ""],
                     required=False,
                 ),
+                "data_recebimento": st.column_config.DateColumn(
+                    "Data Receb.",
+                    format="DD/MM/YYYY",
+                    help="Data de recebimento individual. Se vazio, usa a data padrão abaixo.",
+                ),
             },
             hide_index=True,
             num_rows="fixed",
             key="grid_clientes",
         )
         data_recebimento_cli = _date_input(
-            "Data de recebimento (aplicada aos clientes marcados como **Pago**)",
+            "Data padrão (usada para clientes **Pago** sem data individual preenchida)",
             value=date.today(),
             key="cli_data_recebimento",
-            help="O pagamento entrará no fluxo de caixa nesta data — independente do dia de vencimento.",
+            help="Só aplica aos clientes onde a coluna 'Data Receb.' estiver vazia.",
         )
 
         if st.button("Salvar pagamentos do mês", type="primary"):
             for _, row in edited.iterrows():
                 if not row["cliente_id"] or pd.isna(row["cliente_id"]):
                     continue  # pula linha de total
+                # Usa data individual da linha; se vazia, usa data padrão
+                dr_row = row.get("data_recebimento")
+                if dr_row is not None and not (isinstance(dr_row, float) and pd.isna(dr_row)):
+                    try:
+                        dr_iso = pd.Timestamp(dr_row).date().isoformat()
+                    except Exception:
+                        dr_iso = data_recebimento_cli.isoformat()
+                else:
+                    dr_iso = data_recebimento_cli.isoformat()
                 db.upsert_receita_mes(
                     conn,
                     cliente_id=int(row["cliente_id"]),
                     data_competencia=competencia,
                     status=str(row["status_pagamento"]),
-                    data_recebimento=data_recebimento_cli.isoformat(),
+                    data_recebimento=dr_iso,
                 )
             st.success("Pagamentos salvos e lançados no fluxo de caixa.")
             st.rerun()
