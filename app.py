@@ -747,7 +747,9 @@ def build_fluxo_projetado(
             if vig is not None and str(vig).strip():
                 try:
                     vig_d = date.fromisoformat(str(vig)[:10])
-                    if date(y_m, m_m, 1) < vig_d:
+                    # Compara por mês (ignora o dia da vigência) para evitar
+                    # que um cliente com vigência 20/05 seja excluído de maio inteiro.
+                    if (y_m, m_m) < (vig_d.year, vig_d.month):
                         continue
                 except ValueError:
                     pass
