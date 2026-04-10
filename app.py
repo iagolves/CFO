@@ -1530,6 +1530,96 @@ def main() -> None:
     with tab_cli:
         st.subheader("Honorários do mês")
 
+        # ── Formulário: Cadastrar / Editar / Inativar cliente ─────────────────
+        clientes_todos = db.read_sql(
+            "SELECT id, nome, valor_honorario, dia_vencimento, honorario_vigencia_inicio, observacao, status FROM clientes ORDER BY nome COLLATE NOCASE",
+            conn,
+        )
+        clientes_ativos_lista = clientes_todos[clientes_todos["status"] == "Ativo"] if not clientes_todos.empty else pd.DataFrame()
+
+        with st.expander("➕ Cadastrar novo cliente", expanded=False):
+            with st.form("form_novo_cliente", clear_on_submit=True):
+                fc1, fc2 = st.columns(2)
+                with fc1:
+                    nc_nome = st.text_input("Nome do cliente *", placeholder="Ex.: Empresa XYZ Ltda")
+                    nc_honor = st.number_input("Honorário mensal (R$) *", min_value=0.01, value=500.0, format="%.2f")
+                with fc2:
+                    nc_dia = st.number_input("Dia de vencimento *", min_value=1, max_value=31, value=10)
+                    nc_vig = _date_input(
+                        "Primeiro recebimento a partir de *",
+                        value=date(date.today().year, date.today().month, 1),
+                        key="nc_vigencia",
+                        help="O cliente só aparecerá no fluxo a partir do mês desta data. Ex.: 01/06/2026 → primeiro honorário em junho.",
+                    )
+                nc_obs = st.text_input("Observação (opcional)", placeholder="Ex.: pagamento via PIX")
+                if st.form_submit_button("Cadastrar cliente", type="primary"):
+                    if not (nc_nome or "").strip():
+                        st.error("Informe o nome do cliente.")
+                    else:
+                        try:
+                            new_id = db.insert_cliente(
+                                conn,
+                                nome=nc_nome.strip(),
+                                valor_honorario=float(nc_honor),
+                                dia_vencimento=int(nc_dia),
+                                honorario_vigencia_inicio=nc_vig.isoformat(),
+                                observacao=nc_obs,
+                            )
+                            st.success(f"Cliente **{nc_nome.strip()}** cadastrado (id={new_id}). Primeiro recebimento projetado a partir de **{nc_vig.strftime('%m/%Y')}**.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(str(e))
+
+        with st.expander("✏️ Editar / Inativar cliente existente", expanded=False):
+            if clientes_ativos_lista.empty:
+                st.info("Nenhum cliente ativo.")
+            else:
+                nomes_cli = clientes_ativos_lista["nome"].tolist()
+                ids_cli   = clientes_ativos_lista["id"].tolist()
+                ed_idx = st.selectbox("Selecione o cliente", range(len(nomes_cli)), format_func=lambda i: nomes_cli[i], key="ed_cli_sel")
+                ed_row = clientes_ativos_lista.iloc[ed_idx]
+                with st.form("form_editar_cliente"):
+                    ef1, ef2 = st.columns(2)
+                    with ef1:
+                        ed_nome  = st.text_input("Nome", value=str(ed_row["nome"]))
+                        ed_honor = st.number_input("Honorário (R$)", min_value=0.01, value=float(ed_row["valor_honorario"]), format="%.2f")
+                    with ef2:
+                        ed_dia = st.number_input("Dia vencimento", min_value=1, max_value=31, value=int(ed_row["dia_vencimento"]))
+                        vig_atual = ed_row.get("honorario_vigencia_inicio")
+                        try:
+                            vig_val = date.fromisoformat(str(vig_atual)[:10]) if vig_atual and str(vig_atual).strip() else date(date.today().year, 1, 1)
+                        except ValueError:
+                            vig_val = date(date.today().year, 1, 1)
+                        ed_vig = _date_input("Primeiro recebimento a partir de", value=vig_val, key="ed_vigencia")
+                    ed_obs = st.text_input("Observação", value=str(ed_row.get("observacao") or ""))
+                    col_salvar, col_inativar = st.columns(2)
+                    with col_salvar:
+                        if st.form_submit_button("💾 Salvar alterações", type="primary"):
+                            try:
+                                db.update_cliente(
+                                    conn,
+                                    cliente_id=int(ids_cli[ed_idx]),
+                                    nome=ed_nome.strip(),
+                                    valor_honorario=float(ed_honor),
+                                    dia_vencimento=int(ed_dia),
+                                    honorario_vigencia_inicio=ed_vig.isoformat(),
+                                    observacao=ed_obs,
+                                )
+                                st.success(f"Cliente **{ed_nome.strip()}** atualizado.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(str(e))
+                    with col_inativar:
+                        if st.form_submit_button("🚫 Inativar cliente"):
+                            try:
+                                db.inativar_cliente(conn, cliente_id=int(ids_cli[ed_idx]))
+                                st.success(f"Cliente **{ed_nome.strip()}** inativado.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(str(e))
+
+        st.divider()
+
         _MESES_PT = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
                      "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
         _ANOS_CLI = list(range(2024, 2029))

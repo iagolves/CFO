@@ -1208,6 +1208,73 @@ def delete_entrada_extra(conn: sqlite3.Connection, row_id: int) -> None:
     conn.commit()
 
 
+def insert_cliente(
+    conn,
+    *,
+    nome: str,
+    valor_honorario: float,
+    dia_vencimento: int,
+    honorario_vigencia_inicio: str | None = None,
+    observacao: str | None = None,
+) -> int:
+    """Insere novo cliente e retorna o id gerado."""
+    vig = honorario_vigencia_inicio[:10] if honorario_vigencia_inicio else None
+    obs = observacao.strip() if observacao and observacao.strip() else None
+    try:
+        cur = conn.execute(
+            """
+            INSERT INTO clientes (nome, valor_honorario, dia_vencimento, status,
+                                  honorario_vigencia_inicio, observacao)
+            VALUES (?, ?, ?, 'Ativo', ?, ?)
+            """,
+            (nome.strip(), float(valor_honorario), int(dia_vencimento), vig, obs),
+        )
+        conn.commit()
+        return int(cur.lastrowid or 0)
+    except Exception:
+        # fallback para PostgreSQL (lastrowid não funciona sempre)
+        conn.commit()
+        row = conn.execute(
+            "SELECT id FROM clientes WHERE nome = ? ORDER BY id DESC LIMIT 1",
+            (nome.strip(),),
+        ).fetchone()
+        return int(row["id"]) if row else 0
+
+
+def update_cliente(
+    conn,
+    *,
+    cliente_id: int,
+    nome: str,
+    valor_honorario: float,
+    dia_vencimento: int,
+    honorario_vigencia_inicio: str | None = None,
+    observacao: str | None = None,
+) -> None:
+    """Atualiza dados de um cliente existente."""
+    vig = honorario_vigencia_inicio[:10] if honorario_vigencia_inicio else None
+    obs = observacao.strip() if observacao and observacao.strip() else None
+    conn.execute(
+        """
+        UPDATE clientes
+        SET nome = ?, valor_honorario = ?, dia_vencimento = ?,
+            honorario_vigencia_inicio = ?, observacao = ?
+        WHERE id = ?
+        """,
+        (nome.strip(), float(valor_honorario), int(dia_vencimento), vig, obs, int(cliente_id)),
+    )
+    conn.commit()
+
+
+def inativar_cliente(conn, *, cliente_id: int) -> None:
+    """Marca cliente como Inativo."""
+    conn.execute(
+        "UPDATE clientes SET status = 'Inativo' WHERE id = ?",
+        (int(cliente_id),),
+    )
+    conn.commit()
+
+
 def upsert_receita_mes(
     conn,
     *,
