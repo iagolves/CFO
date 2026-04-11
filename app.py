@@ -1740,10 +1740,14 @@ def main() -> None:
                     continue  # pula linha de total
 
                 def _parse_date_col(val):
-                    if val is None or (isinstance(val, float) and pd.isna(val)):
-                        return None
                     try:
-                        return pd.Timestamp(val).date().isoformat()
+                        if val is None or pd.isna(val):
+                            return None
+                    except (TypeError, ValueError):
+                        pass
+                    try:
+                        iso = pd.Timestamp(val).date().isoformat()
+                        return None if iso in ("NaT", "None", "") else iso
                     except Exception:
                         return None
 
