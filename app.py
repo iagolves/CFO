@@ -708,19 +708,24 @@ def build_fluxo_projetado(
     # Para clientes pagos: usa data_recebimento_real como data do fluxo.
     # Chave: (cliente_id, ym) → data real; ausente = projetar por dia_vencimento.
     pagos_data_real: dict[tuple[int, str], date] = {}
+    adiados_data: dict[tuple[int, str], date] = {}
     try:
         rows_pagos = conn.execute(
             """
-            SELECT cliente_id, data_competencia, data_recebimento_real
+            SELECT cliente_id, data_competencia, data_recebimento_real, data_prevista_recebimento
             FROM receitas
-            WHERE status = 'Pago' AND data_recebimento_real IS NOT NULL
+            WHERE data_recebimento_real IS NOT NULL OR data_prevista_recebimento IS NOT NULL
             """
         ).fetchall()
         for rp in rows_pagos:
             cid_rp = int(rp["cliente_id"])
             ym_rp = str(rp["data_competencia"])[:7]
-            dr_rp = date.fromisoformat(str(rp["data_recebimento_real"])[:10])
-            pagos_data_real[(cid_rp, ym_rp)] = dr_rp
+            if rp["data_recebimento_real"]:
+                dr_rp = date.fromisoformat(str(rp["data_recebimento_real"])[:10])
+                pagos_data_real[(cid_rp, ym_rp)] = dr_rp
+            if rp["data_prevista_recebimento"]:
+                da_rp = date.fromisoformat(str(rp["data_prevista_recebimento"])[:10])
+                adiados_data[(cid_rp, ym_rp)] = da_rp
     except Exception:
         try:
             conn.rollback()
@@ -760,9 +765,12 @@ def build_fluxo_projetado(
                 if data_inicio <= d_real <= data_fim:
                     receitas_servico[d_real] += honor
             else:
-                # Pendente: projeta no dia de vencimento
-                dom = _safe_dom(dia_v, y_m, m_m)
-                d_proj = date(y_m, m_m, dom)
+                # Pendente: usa data adiada se houver, senão projeta no vencimento
+                if (_cid, ym) in adiados_data:
+                    d_proj = adiados_data[(_cid, ym)]
+                else:
+                    dom = _safe_dom(dia_v, y_m, m_m)
+                    d_proj = date(y_m, m_m, dom)
                 if data_inicio <= d_proj <= data_fim:
                     receitas_servico[d_proj] += honor
 
@@ -1652,7 +1660,8 @@ def main() -> None:
               c.dia_vencimento,
               c.valor_honorario,
               COALESCE(r.status, 'Pendente') AS status_pagamento,
-              r.data_recebimento_real AS data_recebimento
+              r.data_recebimento_real AS data_recebimento,
+              r.data_prevista_recebimento AS adiar_para
             FROM clientes c
             LEFT JOIN receitas r
               ON r.cliente_id = c.id AND r.data_competencia = ?
@@ -1663,9 +1672,11 @@ def main() -> None:
             params=(competencia,),
         )
 
-        # Converte coluna de data para tipo date (pode vir como string)
-        if not df.empty and "data_recebimento" in df.columns:
-            df["data_recebimento"] = pd.to_datetime(df["data_recebimento"], errors="coerce").dt.date
+        # Converte colunas de data para tipo date
+        if not df.empty:
+            for col in ("data_recebimento", "adiar_para"):
+                if col in df.columns:
+                    df[col] = pd.to_datetime(df[col], errors="coerce").dt.date
 
         # Linha de total
         if not df.empty:
@@ -1677,18 +1688,20 @@ def main() -> None:
                 "valor_honorario": total_hon,
                 "status_pagamento": "",
                 "data_recebimento": None,
+                "adiar_para": None,
             }])
             df_view = pd.concat([df, soma_row], ignore_index=True)
         else:
             df_view = df
 
         st.caption("Defina o status de cada cliente e a data de recebimento individual (coluna **Data Receb.**). Clientes sem data usarão a data padrão abaixo.")
+        st.caption("**Pago no mês?** → marque Pago e preencha **Data Receb.** | **Adiar para** → cliente não pagou, mova o recebimento para outra data no fluxo.")
         edited = st.data_editor(
             df_view,
             column_config={
                 "cliente_id": st.column_config.NumberColumn("ID", disabled=True, format="%d"),
                 "nome": st.column_config.TextColumn("Cliente", disabled=True, width="large"),
-                "dia_vencimento": st.column_config.NumberColumn("Vencimento (dia)", disabled=True, format="%d"),
+                "dia_vencimento": st.column_config.NumberColumn("Venc.", disabled=True, format="%d"),
                 "valor_honorario": st.column_config.NumberColumn(
                     "Honorário",
                     disabled=True,
@@ -1702,7 +1715,12 @@ def main() -> None:
                 "data_recebimento": st.column_config.DateColumn(
                     "Data Receb.",
                     format="DD/MM/YYYY",
-                    help="Data de recebimento individual. Se vazio, usa a data padrão abaixo.",
+                    help="Data real de recebimento (só para status Pago). Se vazio, usa a data padrão abaixo.",
+                ),
+                "adiar_para": st.column_config.DateColumn(
+                    "Adiar para",
+                    format="DD/MM/YYYY",
+                    help="Cliente não pagou? Mova o recebimento para outra data no fluxo. Limpe o campo quando pagar.",
                 ),
             },
             hide_index=True,
@@ -1720,21 +1738,25 @@ def main() -> None:
             for _, row in edited.iterrows():
                 if not row["cliente_id"] or pd.isna(row["cliente_id"]):
                     continue  # pula linha de total
-                # Usa data individual da linha; se vazia, usa data padrão
-                dr_row = row.get("data_recebimento")
-                if dr_row is not None and not (isinstance(dr_row, float) and pd.isna(dr_row)):
+
+                def _parse_date_col(val):
+                    if val is None or (isinstance(val, float) and pd.isna(val)):
+                        return None
                     try:
-                        dr_iso = pd.Timestamp(dr_row).date().isoformat()
+                        return pd.Timestamp(val).date().isoformat()
                     except Exception:
-                        dr_iso = data_recebimento_cli.isoformat()
-                else:
-                    dr_iso = data_recebimento_cli.isoformat()
+                        return None
+
+                dr_iso = _parse_date_col(row.get("data_recebimento")) or data_recebimento_cli.isoformat()
+                dp_iso = _parse_date_col(row.get("adiar_para"))
+
                 db.upsert_receita_mes(
                     conn,
                     cliente_id=int(row["cliente_id"]),
                     data_competencia=competencia,
                     status=str(row["status_pagamento"]),
                     data_recebimento=dr_iso,
+                    data_prevista_recebimento=dp_iso,
                 )
             st.success("Pagamentos salvos e lançados no fluxo de caixa.")
             st.rerun()

@@ -478,6 +478,23 @@ def ensure_receitas_transacao_id_column(conn) -> None:
             conn.commit()
 
 
+def ensure_receitas_data_prevista_column(conn) -> None:
+    """Garante coluna `data_prevista_recebimento` em receitas (migração)."""
+    if isinstance(conn, PgConn):
+        row = conn.execute(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = 'receitas' AND column_name = 'data_prevista_recebimento'"
+        ).fetchone()
+        if row:
+            return
+    else:
+        cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(receitas)").fetchall()}
+        if "data_prevista_recebimento" in cols:
+            return
+    conn.execute("ALTER TABLE receitas ADD COLUMN data_prevista_recebimento TEXT")
+    conn.commit()
+
+
 def ensure_entradas_extras_status_column(conn) -> None:
     """Garante coluna `status` (Realizado | Provisionado) em bases antigas."""
     if isinstance(conn, PgConn):
@@ -505,6 +522,7 @@ def init_schema(conn) -> None:
         # Tabelas já gerenciadas no Supabase; apenas garante colunas de migração.
         ensure_entradas_extras_status_column(conn)
         ensure_receitas_transacao_id_column(conn)
+        ensure_receitas_data_prevista_column(conn)
         return
     row = conn.execute("PRAGMA user_version").fetchone()
     v = int(row[0]) if row else 0
@@ -1282,6 +1300,7 @@ def upsert_receita_mes(
     data_competencia: str,
     status: str,
     data_recebimento: str | None = None,
+    data_prevista_recebimento: str | None = None,
 ) -> None:
     """Atualiza ou cria receita do mês e espelha em transacoes (quando possível)."""
     if status not in ("Pendente", "Pago"):
@@ -1344,16 +1363,18 @@ def upsert_receita_mes(
             if row_rec and row_rec["transacao_id"]:
                 conn.execute("DELETE FROM transacoes WHERE id = ?", (int(row_rec["transacao_id"]),))
 
+            dp = data_prevista_recebimento[:10] if data_prevista_recebimento else None
             conn.execute(
                 """
-                INSERT INTO receitas (cliente_id, data_competencia, data_recebimento_real, status, transacao_id)
-                VALUES (?, ?, NULL, ?, NULL)
+                INSERT INTO receitas (cliente_id, data_competencia, data_recebimento_real, status, transacao_id, data_prevista_recebimento)
+                VALUES (?, ?, NULL, ?, NULL, ?)
                 ON CONFLICT (cliente_id, data_competencia) DO UPDATE SET
-                  status                = excluded.status,
-                  data_recebimento_real = NULL,
-                  transacao_id          = NULL
+                  status                      = excluded.status,
+                  data_recebimento_real        = NULL,
+                  transacao_id                = NULL,
+                  data_prevista_recebimento   = excluded.data_prevista_recebimento
                 """,
-                (cid, data_competencia, status),
+                (cid, data_competencia, status, dp),
             )
 
         conn.commit()
