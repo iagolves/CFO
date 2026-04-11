@@ -1410,15 +1410,17 @@ def upsert_receita_mes(
             except Exception:
                 pass
 
+    dp = data_prevista_recebimento[:10] if data_prevista_recebimento else None
     conn.execute(
         """
-        INSERT INTO receitas (cliente_id, data_competencia, data_recebimento_real, status)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO receitas (cliente_id, data_competencia, data_recebimento_real, status, data_prevista_recebimento)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT (cliente_id, data_competencia) DO UPDATE SET
-          status                = excluded.status,
-          data_recebimento_real = excluded.data_recebimento_real
+          status                    = excluded.status,
+          data_recebimento_real     = excluded.data_recebimento_real,
+          data_prevista_recebimento = excluded.data_prevista_recebimento
         """,
-        (cid, data_competencia, data_rec, status),
+        (cid, data_competencia, data_rec, status, dp),
     )
     conn.commit()
 
