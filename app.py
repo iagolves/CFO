@@ -740,6 +740,28 @@ def build_fluxo_projetado(
         d_tmp += timedelta(days=28)
     meses_janela.add(f"{data_fim.year:04d}-{data_fim.month:02d}")
 
+    # Janela estendida: inclui meses vizinhos para capturar pagamentos antecipados
+    # (ex: honorário de maio pago em abril aparece na janela de abril).
+    meses_estendidos = set(meses_janela)
+    _prox = data_fim + timedelta(days=32)
+    meses_estendidos.add(f"{_prox.year:04d}-{_prox.month:02d}")
+
+    # Controla quais (cliente, data) já foram contabilizados para evitar duplicidade.
+    _contabilizados: set[tuple[int, date]] = set()
+
+    # ── Passo 1: pagamentos REAIS dentro da janela (qualquer competência) ────
+    for cli in clientes_ativos:
+        _cid = int(cli["id"])
+        honor = float(cli["valor_honorario"])
+        for ym in meses_estendidos:
+            if (_cid, ym) not in pagos_data_real:
+                continue
+            d_real = pagos_data_real[(_cid, ym)]
+            if data_inicio <= d_real <= data_fim and (_cid, d_real) not in _contabilizados:
+                receitas_servico[d_real] += honor
+                _contabilizados.add((_cid, d_real))
+
+    # ── Passo 2: projeções de pendentes (pula se já contabilizado como pago) ─
     for cli in clientes_ativos:
         _cid = int(cli["id"])
         honor = float(cli["valor_honorario"])
@@ -747,32 +769,28 @@ def build_fluxo_projetado(
         vig = cli["honorario_vigencia_inicio"]
 
         for ym in meses_janela:
+            if (_cid, ym) in pagos_data_real:
+                continue  # já tratado no passo 1
             y_m, m_m = int(ym[:4]), int(ym[5:])
 
             if vig is not None and str(vig).strip():
                 try:
                     vig_d = date.fromisoformat(str(vig)[:10])
-                    # Compara por mês (ignora o dia da vigência) para evitar
-                    # que um cliente com vigência 20/05 seja excluído de maio inteiro.
                     if (y_m, m_m) < (vig_d.year, vig_d.month):
                         continue
                 except ValueError:
                     pass
 
-            if (_cid, ym) in pagos_data_real:
-                # Pago: usa data real de recebimento
-                d_real = pagos_data_real[(_cid, ym)]
-                if data_inicio <= d_real <= data_fim:
-                    receitas_servico[d_real] += honor
+            # Usa data adiada se houver, senão projeta no vencimento
+            if (_cid, ym) in adiados_data:
+                d_proj = adiados_data[(_cid, ym)]
             else:
-                # Pendente: usa data adiada se houver, senão projeta no vencimento
-                if (_cid, ym) in adiados_data:
-                    d_proj = adiados_data[(_cid, ym)]
-                else:
-                    dom = _safe_dom(dia_v, y_m, m_m)
-                    d_proj = date(y_m, m_m, dom)
-                if data_inicio <= d_proj <= data_fim:
-                    receitas_servico[d_proj] += honor
+                dom = _safe_dom(dia_v, y_m, m_m)
+                d_proj = date(y_m, m_m, dom)
+
+            if data_inicio <= d_proj <= data_fim and (_cid, d_proj) not in _contabilizados:
+                receitas_servico[d_proj] += honor
+                _contabilizados.add((_cid, d_proj))
 
     rows: list[dict[str, object]] = []
     saldo = saldo0
