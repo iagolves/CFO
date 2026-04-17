@@ -724,14 +724,18 @@ def build_fluxo_projetado(
         for rp in rows_pagos:
             cid_rp = int(rp["cliente_id"])
             ym_rp = str(rp["data_competencia"])[:7]
-            if str(rp.get("status", "") or "").strip() == "Isento":
+            dp_val = str(rp["data_prevista_recebimento"] or "").strip()
+            if dp_val == "ISENTO":
                 isentos.add((cid_rp, ym_rp))
+            elif dp_val not in ("", "NaT", "None"):
+                try:
+                    da_rp = date.fromisoformat(dp_val[:10])
+                    adiados_data[(cid_rp, ym_rp)] = da_rp
+                except ValueError:
+                    pass
             if rp["data_recebimento_real"]:
                 dr_rp = date.fromisoformat(str(rp["data_recebimento_real"])[:10])
                 pagos_data_real[(cid_rp, ym_rp)] = dr_rp
-            if rp["data_prevista_recebimento"] and str(rp["data_prevista_recebimento"]) not in ("NaT", "None", ""):
-                da_rp = date.fromisoformat(str(rp["data_prevista_recebimento"])[:10])
-                adiados_data[(cid_rp, ym_rp)] = da_rp
     except Exception:
         try:
             conn.rollback()
@@ -1686,9 +1690,14 @@ def main() -> None:
               c.nome,
               c.dia_vencimento,
               c.valor_honorario,
-              COALESCE(r.status, 'Pendente') AS status_pagamento,
+              CASE
+                WHEN r.data_prevista_recebimento = 'ISENTO' THEN 'Isento'
+                ELSE COALESCE(r.status, 'Pendente')
+              END AS status_pagamento,
               r.data_recebimento_real AS data_recebimento,
-              r.data_prevista_recebimento AS adiar_para
+              CASE WHEN r.data_prevista_recebimento = 'ISENTO' THEN NULL
+                   ELSE r.data_prevista_recebimento
+              END AS adiar_para
             FROM clientes c
             LEFT JOIN receitas r
               ON r.cliente_id = c.id AND r.data_competencia = ?

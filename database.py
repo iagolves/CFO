@@ -1306,6 +1306,12 @@ def upsert_receita_mes(
     if status not in ("Pendente", "Pago", "Isento"):
         raise ValueError("status inválido")
 
+    # "Isento" é salvo como Pendente com marcador especial em data_prevista_recebimento.
+    # Evita alterar a CHECK constraint do Supabase.
+    if status == "Isento":
+        status = "Pendente"
+        data_prevista_recebimento = "ISENTO"
+
     cid = int(cliente_id)
     data_rec = (data_recebimento or date.today().isoformat())[:10] if status == "Pago" else None
 
