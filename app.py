@@ -740,11 +740,12 @@ def build_fluxo_projetado(
         d_tmp += timedelta(days=28)
     meses_janela.add(f"{data_fim.year:04d}-{data_fim.month:02d}")
 
-    # Janela estendida: inclui meses vizinhos para capturar pagamentos antecipados
+    # Janela estendida: inclui o mês seguinte para capturar pagamentos antecipados
     # (ex: honorário de maio pago em abril aparece na janela de abril).
     meses_estendidos = set(meses_janela)
-    _prox = data_fim + timedelta(days=32)
-    meses_estendidos.add(f"{_prox.year:04d}-{_prox.month:02d}")
+    _prox_m = data_fim.month % 12 + 1
+    _prox_y = data_fim.year + (1 if data_fim.month == 12 else 0)
+    meses_estendidos.add(f"{_prox_y:04d}-{_prox_m:02d}")
 
     # Controla quais (cliente, data) já foram contabilizados para evitar duplicidade.
     _contabilizados: set[tuple[int, date]] = set()
