@@ -1303,7 +1303,7 @@ def upsert_receita_mes(
     data_prevista_recebimento: str | None = None,
 ) -> None:
     """Atualiza ou cria receita do mês e espelha em transacoes (quando possível)."""
-    if status not in ("Pendente", "Pago"):
+    if status not in ("Pendente", "Pago", "Isento"):
         raise ValueError("status inválido")
 
     cid = int(cliente_id)

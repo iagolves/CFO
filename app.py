@@ -709,21 +709,27 @@ def build_fluxo_projetado(
     # Chave: (cliente_id, ym) → data real; ausente = projetar por dia_vencimento.
     pagos_data_real: dict[tuple[int, str], date] = {}
     adiados_data: dict[tuple[int, str], date] = {}
+    isentos: set[tuple[int, str]] = set()
     try:
         rows_pagos = conn.execute(
             """
-            SELECT cliente_id, data_competencia, data_recebimento_real, data_prevista_recebimento
+            SELECT cliente_id, data_competencia, data_recebimento_real,
+                   data_prevista_recebimento, status
             FROM receitas
-            WHERE data_recebimento_real IS NOT NULL OR data_prevista_recebimento IS NOT NULL
+            WHERE data_recebimento_real IS NOT NULL
+               OR data_prevista_recebimento IS NOT NULL
+               OR status = 'Isento'
             """
         ).fetchall()
         for rp in rows_pagos:
             cid_rp = int(rp["cliente_id"])
             ym_rp = str(rp["data_competencia"])[:7]
+            if str(rp.get("status", "") or "").strip() == "Isento":
+                isentos.add((cid_rp, ym_rp))
             if rp["data_recebimento_real"]:
                 dr_rp = date.fromisoformat(str(rp["data_recebimento_real"])[:10])
                 pagos_data_real[(cid_rp, ym_rp)] = dr_rp
-            if rp["data_prevista_recebimento"]:
+            if rp["data_prevista_recebimento"] and str(rp["data_prevista_recebimento"]) not in ("NaT", "None", ""):
                 da_rp = date.fromisoformat(str(rp["data_prevista_recebimento"])[:10])
                 adiados_data[(cid_rp, ym_rp)] = da_rp
     except Exception:
@@ -762,7 +768,7 @@ def build_fluxo_projetado(
                 receitas_servico[d_real] += honor
                 _contabilizados.add((_cid, d_real))
 
-    # ── Passo 2: projeções de pendentes (pula se já contabilizado como pago) ─
+    # ── Passo 2: projeções de pendentes (pula se já contabilizado ou isento) ──
     for cli in clientes_ativos:
         _cid = int(cli["id"])
         honor = float(cli["valor_honorario"])
@@ -772,6 +778,8 @@ def build_fluxo_projetado(
         for ym in meses_janela:
             if (_cid, ym) in pagos_data_real:
                 continue  # já tratado no passo 1
+            if (_cid, ym) in isentos:
+                continue  # cliente não receberá neste mês
             y_m, m_m = int(ym[:4]), int(ym[5:])
 
             if vig is not None and str(vig).strip():
@@ -1728,7 +1736,7 @@ def main() -> None:
                 ),
                 "status_pagamento": st.column_config.SelectboxColumn(
                     "Pago no mês?",
-                    options=["Pendente", "Pago", ""],
+                    options=["Pendente", "Pago", "Isento", ""],
                     required=False,
                 ),
                 "data_recebimento": st.column_config.DateColumn(
