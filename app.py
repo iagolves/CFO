@@ -1954,14 +1954,14 @@ def main() -> None:
         try:
             fat_all = db.read_sql(
                 """
-                SELECT cartao_id, mes_referencia, valor_total, status_pago
+                SELECT cartao_id, mes_referencia, valor_total, status_pago, data_vencimento
                 FROM faturas_pagas
                 """,
                 conn,
             )
         except sqlite3.OperationalError:
             fat_all = pd.DataFrame(
-                columns=["cartao_id", "mes_referencia", "valor_total", "status_pago"]
+                columns=["cartao_id", "mes_referencia", "valor_total", "status_pago", "data_vencimento"]
             )
 
         mat_rows: list[dict[str, str]] = []
@@ -2001,6 +2001,80 @@ def main() -> None:
             mat_rows.append(tot_row)
 
         st.dataframe(pd.DataFrame(mat_rows), hide_index=True, use_container_width=True)
+
+        with st.expander("✏️ Editar valor de fatura provisionada"):
+            if cart_df.empty:
+                st.info("Nenhum cartão cadastrado.")
+            else:
+                ed0, ed1 = st.columns(2)
+                with ed0:
+                    ed_cid = st.selectbox(
+                        "Cartão",
+                        options=[int(x) for x in cart_df["id"].tolist()],
+                        format_func=lambda i: nomes_por_id.get(int(i), str(i)),
+                        key="ed_fat_cid",
+                    )
+                with ed1:
+                    ed_mes_label = st.selectbox(
+                        "Mês",
+                        options=col_labels,
+                        key="ed_fat_mes",
+                    )
+                ed_mes_idx = col_labels.index(ed_mes_label)
+                ed_mes_key = col_keys[ed_mes_idx]
+
+                sub_ed = fat_all[
+                    (fat_all["cartao_id"] == ed_cid)
+                    & (fat_all["mes_referencia"].astype(str).str[:10] == ed_mes_key[:10])
+                ]
+
+                cur_val = 0.0
+                cur_venc = date.today()
+                is_paid = False
+                if not sub_ed.empty:
+                    cur_val = float(sub_ed.iloc[0]["valor_total"])
+                    is_paid = bool(int(sub_ed.iloc[0]["status_pago"]))
+                    try:
+                        cur_venc = date.fromisoformat(str(sub_ed.iloc[0]["data_vencimento"])[:10])
+                    except (ValueError, TypeError):
+                        cur_venc = date.today()
+
+                if is_paid:
+                    st.warning("Esta fatura já está paga e não pode ser editada.")
+                else:
+                    ed2, ed3 = st.columns(2)
+                    with ed2:
+                        ed_venc = _date_input(
+                            "Data de vencimento",
+                            value=cur_venc,
+                            key="ed_fat_venc",
+                        )
+                    with ed3:
+                        ed_val = st.number_input(
+                            "Valor total (R$)",
+                            min_value=0.0,
+                            value=cur_val,
+                            format="%.2f",
+                            key="ed_fat_val",
+                        )
+                    if not sub_ed.empty:
+                        st.caption(f"Valor atual: {brl(cur_val)}")
+                    if st.button("💾 Salvar edição", key="ed_fat_save", type="primary"):
+                        if ed_val <= 0:
+                            st.error("Informe um valor maior que zero.")
+                        else:
+                            try:
+                                db.insert_or_update_fatura_fechamento(
+                                    conn,
+                                    cartao_id=int(ed_cid),
+                                    mes_referencia_iso=ed_mes_key,
+                                    data_vencimento_iso=ed_venc.isoformat(),
+                                    valor_total=float(ed_val),
+                                )
+                                st.success("Fatura atualizada!")
+                                st.rerun()
+                            except ValueError as e:
+                                st.error(str(e))
 
         st.divider()
         st.markdown("##### Faturas pendentes — pagar")
